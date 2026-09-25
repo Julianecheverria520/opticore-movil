@@ -20,10 +20,33 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "package": "com.julianecheverria.opticoremovil"
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-sqlite",
+      "expo-status-bar",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "OptiCore usa la cámara para escanear el código QR del equipo.",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "OptiCore guarda la ubicación de cada preoperacional y tanqueo como evidencia del registro."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "797f04b6-3b0c-4fa7-9c13-44c826a9ce03"
+      }
     }
   }
 }
