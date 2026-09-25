@@ -1,0 +1,347 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, Alert, Modal, ActivityIndicator, ScrollView } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { CameraView, Camera } from 'expo-camera';
+import { FontAwesome5 } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Updates from 'expo-updates';
+
+import LoginScreen from './LoginScreen';
+import { getDb, esMaquinaria } from '../database/db';
+import { sincronizarDatosMaestros, ultimoMotivoSync } from '../database/sync';
+import { enviarPendientes, contarPendientes, iniciarAutoSync } from '../database/syncUp';
+import { API_URL } from '../config';
+
+// R7 · Estado de conexión con tres causas distintas, para que el operador sepa qué hacer
+const ESTADOS = {
+  ok: { texto: 'EN LÍNEA', color: '#10b981' },
+  sin_red: { texto: 'SIN SEÑAL', color: '#ef4444' },
+  servidor: { texto: 'SERVIDOR NO DISPONIBLE', color: '#f59e0b' },
+  sesion: { texto: 'SESIÓN POR RENOVAR', color: '#f59e0b' },
+};
+
+export default function HomeScreen({ navigation }) {
+  const [hasPermission, setHasPermission] = useState(null);
+  const [equipoActual, setEquipoActual] = useState(null); // { placa, tipo, usaHoras }
+  const [placaInput, setPlacaInput] = useState('');
+
+  const [scanned, setScanned] = useState(false);
+  const [showCamera, setShowCamera] = useState(false);
+
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSync, setLastSync] = useState('Nunca');
+  const [estadoRed, setEstadoRed] = useState('ok');
+  const [pedirLogin, setPedirLogin] = useState(false);
+
+  // Estado de la cola de envíos
+  const [pendientes, setPendientes] = useState({ pendientes: 0, errores: 0 });
+  const sincronizando = useRef(false);
+
+  const sincronizarFondo = useCallback(async () => {
+    if (sincronizando.current) return;
+    sincronizando.current = true;
+    setIsSyncing(true);
+    try {
+      const envio = await enviarPendientes(); // 1. Sube
+
+      // E3 · Sesión vencida: NO se borra el token ni se saca al operador. Puede seguir
+      // capturando; se le pide iniciar sesión solo para enviar.
+      if (envio.sesionExpirada) {
+        setEstadoRed('sesion');
+        return;
+      }
+
+      const token = await AsyncStorage.getItem('userToken');
+      const exito = await sincronizarDatosMaestros(token, API_URL); // 2. Baja
+
+      if (exito || ultimoMotivoSync === 'vacio') {
+        setEstadoRed('ok');
+        const nuevaFecha = await AsyncStorage.getItem('lastSyncDate');
+        if (nuevaFecha) setLastSync(nuevaFecha);
+      } else if (ultimoMotivoSync === 'sesion') {
+        setEstadoRed('sesion');
+      } else if (ultimoMotivoSync === 'sin_red' || envio.sinRed) {
+        setEstadoRed('sin_red');
+      } else {
+        setEstadoRed('servidor');
+      }
+    } catch (e) {
+      setEstadoRed('sin_red');
+    } finally {
+      try { setPendientes(await contarPendientes()); } catch {}
+      setIsSyncing(false);
+      sincronizando.current = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    async function inicializar() {
+      const { status } = await Camera.requestCameraPermissionsAsync();
+      setHasPermission(status === 'granted');
+
+      const fechaGuardada = await AsyncStorage.getItem('lastSyncDate');
+      if (fechaGuardada) setLastSync(fechaGuardada);
+
+      // Sincronización inicial al abrir (única; el listener ya no dispara otra en paralelo)
+      await sincronizarFondo();
+    }
+
+    inicializar();
+
+    // Sube apenas el celular recupera señal
+    const cancelar = iniciarAutoSync(sincronizarFondo);
+    return cancelar; // Limpia el listener si la pantalla se desmonta
+  }, [sincronizarFondo]);
+
+  // Al volver de un formulario, actualizar el contador de pendientes
+  useEffect(() => {
+    const unsub = navigation.addListener('focus', async () => {
+      try { setPendientes(await contarPendientes()); } catch {}
+    });
+    return unsub;
+  }, [navigation]);
+
+  // Re-login desde el aviso de sesión vencida: guarda el token nuevo y reintenta el envío
+  const reloginExitoso = async (token, username) => {
+    await AsyncStorage.setItem('userToken', token);
+    if (username) await AsyncStorage.setItem('userName', username.trim());
+    setPedirLogin(false);
+    setEstadoRed('ok');
+    sincronizarFondo();
+  };
+
+  const cerrarSesion = async () => {
+    const { pendientes: n } = await contarPendientes();
+    Alert.alert(
+      'Cerrar Sesión',
+      n > 0 ? `Tienes ${n} registro(s) sin enviar. Se conservarán en el celular. ¿Salir?` : '¿Deseas salir?',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Salir', style: 'destructive', onPress: async () => { await AsyncStorage.removeItem('userToken'); Updates.reloadAsync(); } }
+      ]
+    );
+  };
+
+  // E7 · Solo se aceptan placas que existen en los equipos descargados
+  const seleccionarEquipo = async (placaTexto) => {
+    const placaClean = placaTexto ? placaTexto.trim().toUpperCase() : '';
+    if (placaClean.length < 3) { Alert.alert('Aviso', 'Placa no válida.'); return; }
+    setShowCamera(false);
+
+    try {
+      const db = await getDb();
+      const eq = await db.getFirstAsync('SELECT * FROM equipos WHERE placa = ?', placaClean);
+      if (eq) {
+        setEquipoActual({ placa: eq.placa, tipo: eq.tipo || 'VEHÍCULO', usaHoras: esMaquinaria(eq) });
+        return;
+      }
+
+      const { n } = await db.getFirstAsync('SELECT COUNT(*) AS n FROM equipos');
+      if (n === 0) {
+        Alert.alert('Sin equipos descargados', 'Conéctate a internet y toca el botón de sincronizar para descargar la lista de equipos.');
+        return;
+      }
+
+      const parecidas = await db.getAllAsync(
+        'SELECT placa FROM equipos WHERE placa LIKE ? ORDER BY placa LIMIT 4',
+        `%${placaClean.slice(0, 3)}%`
+      );
+      Alert.alert(
+        'Placa no registrada',
+        `La placa ${placaClean} no está en la lista de equipos de tu empresa.` +
+          (parecidas.length ? `\n\n¿Quisiste decir: ${parecidas.map((p) => p.placa).join(', ')}?` : '') +
+          '\n\nSi es un equipo nuevo, pide que lo registren y sincroniza de nuevo.'
+      );
+    } catch (e) {
+      Alert.alert('Error', 'No se pudo consultar la lista de equipos del celular.');
+    }
+  };
+
+  const handleBarCodeScanned = ({ data }) => {
+    setScanned(true);
+    let placaDetectada = data;
+    if (data.includes('placa=')) {
+      const urlParams = new URLSearchParams(data.split('?')[1]);
+      placaDetectada = urlParams.get('placa') || data;
+    }
+    seleccionarEquipo(placaDetectada);
+  };
+
+  const estado = ESTADOS[estadoRed] || ESTADOS.ok;
+
+  const avisoSesion = estadoRed === 'sesion' ? (
+    <TouchableOpacity style={styles.bannerSesion} onPress={() => setPedirLogin(true)}>
+      <FontAwesome5 name="user-lock" size={16} color="#0f172a" />
+      <View style={{ flex: 1, marginLeft: 10 }}>
+        <Text style={styles.bannerTitulo}>Inicia sesión para enviar</Text>
+        <Text style={styles.bannerTexto}>Puedes seguir registrando. Todo queda guardado en el celular.</Text>
+      </View>
+      <FontAwesome5 name="chevron-right" size={12} color="#0f172a" />
+    </TouchableOpacity>
+  ) : null;
+
+  const modalLogin = (
+    <Modal visible={pedirLogin} animationType="slide" onRequestClose={() => setPedirLogin(false)}>
+      <View style={{ flex: 1 }}>
+        <LoginScreen onLoginSuccess={reloginExitoso} />
+        <TouchableOpacity style={styles.btnCerrarModal} onPress={() => setPedirLogin(false)}>
+          <Text style={styles.btnCerrarModalText}>Ahora no</Text>
+        </TouchableOpacity>
+      </View>
+    </Modal>
+  );
+
+  if (hasPermission === null) return <View style={styles.centerContainer}><ActivityIndicator size="large" color="#3b82f6" /></View>;
+
+  if (!equipoActual) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.containerScan}>
+          <View style={styles.headerScan}>
+            <View>
+              <Text style={styles.titleScan}>Seleccionar Equipo</Text>
+              <Text style={styles.subtitleScan}>Escanea el QR para iniciar operación</Text>
+            </View>
+            <TouchableOpacity style={styles.btnIconTop} onPress={cerrarSesion}>
+              <FontAwesome5 name="sign-out-alt" size={16} color="#ef4444" />
+            </TouchableOpacity>
+          </View>
+          {avisoSesion}
+          <TouchableOpacity style={styles.btnQrGiant} onPress={() => { setScanned(false); setShowCamera(true); }}>
+            <FontAwesome5 name="qrcode" size={40} color="#fff" style={{ marginBottom: 15 }} />
+            <Text style={styles.btnQrTextGiant}>Escanear Código QR</Text>
+          </TouchableOpacity>
+          <Text style={styles.orText}>--- O INGRESA MANUALMENTE ---</Text>
+          <View style={styles.cardManual}>
+            <TextInput style={styles.inputManual} placeholder="EJ: SCM001" placeholderTextColor="#475569" value={placaInput} onChangeText={setPlacaInput} autoCapitalize="characters" />
+            <TouchableOpacity style={styles.btnActionScan} onPress={() => seleccionarEquipo(placaInput)}>
+              <Text style={styles.btnTextScan}>Continuar</Text>
+            </TouchableOpacity>
+          </View>
+          <Modal visible={showCamera} animationType="slide">
+            <View style={styles.cameraContainer}>
+              <CameraView onBarcodeScanned={scanned ? undefined : handleBarCodeScanned} barcodeScannerSettings={{ barcodeTypes: ['qr'] }} style={StyleSheet.absoluteFillObject} />
+              <View style={styles.cameraOverlay}>
+                <TouchableOpacity style={styles.btnCloseCamera} onPress={() => setShowCamera(false)}>
+                  <Text style={styles.btnTextScan}>Cancelar</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </Modal>
+          {modalLogin}
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.safeArea}>
+      <ScrollView contentContainerStyle={styles.hubContainer}>
+        <View style={styles.hubHeader}>
+          <View style={styles.userInfo}>
+            <View style={styles.userAvatar}>
+              <FontAwesome5 name="user" size={18} color="#ffffff" />
+            </View>
+            <View style={{ marginLeft: 10, flexShrink: 1 }}>
+              <Text style={styles.userTitle}>Operación</Text>
+              <View style={styles.rowCenter}>
+                <View style={[styles.dotOffline, { backgroundColor: estado.color }]} />
+                <Text style={styles.userSubtitle}>{estado.texto} • Sync: {lastSync}</Text>
+              </View>
+              {pendientes.pendientes > 0 && <Text style={[styles.userSubtitle, { color: '#f59e0b', marginTop: 2 }]}>• {pendientes.pendientes} por enviar</Text>}
+              {pendientes.errores > 0 && <Text style={[styles.userSubtitle, { color: '#ef4444', marginTop: 2 }]}>• {pendientes.errores} con error</Text>}
+            </View>
+          </View>
+          <View style={styles.topActions}>
+            <TouchableOpacity style={styles.btnTopSmall} onPress={sincronizarFondo} disabled={isSyncing}>
+              {isSyncing ? <ActivityIndicator size="small" color="#fff" /> : <FontAwesome5 name="sync-alt" size={16} color="#fff" />}
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.btnTopSmall} onPress={cerrarSesion}>
+              <FontAwesome5 name="sign-out-alt" size={16} color="#fff" />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {avisoSesion}
+
+        <View style={styles.equipoCard}>
+          <View style={styles.equipoIconWrap}><FontAwesome5 name={equipoActual.usaHoras ? 'tractor' : 'truck'} size={28} color="#fff" /></View>
+          <View style={styles.equipoInfo}>
+            <Text style={styles.equipoLabel}>EQUIPO ACTUAL</Text>
+            <Text style={styles.equipoName}>{equipoActual.placa}</Text>
+            <Text style={styles.equipoDesc}>{equipoActual.tipo} • {equipoActual.usaHoras ? 'Horómetro' : 'Odómetro'}</Text>
+          </View>
+          <TouchableOpacity style={styles.btnCambiar} onPress={() => { setEquipoActual(null); setPlacaInput(''); }}>
+            <FontAwesome5 name="exchange-alt" size={12} color="#fff" />
+            <Text style={styles.btnCambiarText}>Cambiar</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.row}>
+          <TouchableOpacity style={[styles.cardPrimary, { backgroundColor: '#3b82f6' }]} onPress={() => navigation.navigate('Preoperacional', { placa: equipoActual.placa })}>
+            <View style={styles.iconLightWrap}><FontAwesome5 name="clipboard-check" size={18} color="#3b82f6" /></View>
+            <Text style={styles.cardTitle}>Preoperacional</Text>
+            <Text style={styles.cardSubtitle}>Verificar el equipo</Text>
+            <FontAwesome5 name="chevron-right" size={12} color="#fff" style={styles.chevronPos} />
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.cardPrimary, { backgroundColor: '#10b981' }]} onPress={() => navigation.navigate('Combustible', { placa: equipoActual.placa })}>
+            <View style={[styles.iconLightWrap, { backgroundColor: 'rgba(255,255,255,0.2)' }]}><FontAwesome5 name="gas-pump" size={18} color="#fff" /></View>
+            <Text style={styles.cardTitle}>Combustible</Text>
+            <Text style={styles.cardSubtitle}>Suministro</Text>
+            <FontAwesome5 name="chevron-right" size={12} color="#fff" style={styles.chevronPos} />
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+      {modalLogin}
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  safeArea: { flex: 1, backgroundColor: '#0f172a' },
+  centerContainer: { flex: 1, backgroundColor: '#0f172a', justifyContent: 'center', alignItems: 'center' },
+  containerScan: { flex: 1, padding: 20 },
+  headerScan: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 40 },
+  titleScan: { fontSize: 24, fontWeight: '900', color: '#fff' },
+  subtitleScan: { fontSize: 14, color: '#94a3b8' },
+  btnIconTop: { backgroundColor: '#1e293b', padding: 12, borderRadius: 8 },
+  btnQrGiant: { backgroundColor: '#1e293b', padding: 40, borderRadius: 20, alignItems: 'center', borderWidth: 1, borderColor: '#334155' },
+  btnQrTextGiant: { color: '#fff', fontWeight: 'bold', fontSize: 18 },
+  orText: { textAlign: 'center', color: '#64748b', marginVertical: 30, fontWeight: '800', letterSpacing: 1 },
+  cardManual: { backgroundColor: '#1e293b', padding: 20, borderRadius: 15, borderWidth: 1, borderColor: '#334155' },
+  inputManual: { backgroundColor: '#0f172a', borderWidth: 1, borderColor: '#334155', borderRadius: 8, padding: 15, fontSize: 22, fontWeight: 'bold', color: '#fff', textAlign: 'center', marginBottom: 15 },
+  btnActionScan: { backgroundColor: '#3b82f6', padding: 15, borderRadius: 8, alignItems: 'center' },
+  btnTextScan: { color: '#fff', fontWeight: '900', fontSize: 16, textTransform: 'uppercase' },
+  hubContainer: { padding: 15, paddingBottom: 40 },
+  hubHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  userInfo: { flexDirection: 'row', alignItems: 'center', flexShrink: 1 },
+  userAvatar: { width: 45, height: 45, borderRadius: 25, backgroundColor: '#3b82f6', justifyContent: 'center', alignItems: 'center' },
+  userTitle: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
+  userSubtitle: { color: '#94a3b8', fontSize: 11, fontWeight: 'bold', marginLeft: 4 },
+  rowCenter: { flexDirection: 'row', alignItems: 'center', marginTop: 4 },
+  dotOffline: { width: 8, height: 8, borderRadius: 4 },
+  topActions: { flexDirection: 'row', gap: 8 },
+  btnTopSmall: { backgroundColor: '#1e293b', width: 40, height: 40, borderRadius: 8, justifyContent: 'center', alignItems: 'center' },
+  bannerSesion: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fbbf24', borderRadius: 12, padding: 14, marginBottom: 15 },
+  bannerTitulo: { color: '#0f172a', fontWeight: '900', fontSize: 14 },
+  bannerTexto: { color: '#1e293b', fontSize: 12, marginTop: 2 },
+  btnCerrarModal: { position: 'absolute', top: 50, right: 20, backgroundColor: '#1e293b', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8 },
+  btnCerrarModalText: { color: '#fff', fontWeight: 'bold' },
+  equipoCard: { backgroundColor: '#1e293b', borderRadius: 16, padding: 20, marginBottom: 15, flexDirection: 'row', alignItems: 'center' },
+  equipoIconWrap: { width: 60, height: 60, backgroundColor: '#334155', borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginRight: 15 },
+  equipoInfo: { flex: 1 },
+  equipoLabel: { color: '#94a3b8', fontSize: 10, fontWeight: 'bold', letterSpacing: 1, marginBottom: 2 },
+  equipoName: { color: '#fff', fontSize: 18, fontWeight: '900', marginBottom: 2 },
+  equipoDesc: { color: '#cbd5e1', fontSize: 12, marginBottom: 6 },
+  btnCambiar: { position: 'absolute', right: 15, bottom: 15, backgroundColor: '#334155', flexDirection: 'row', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 6, alignItems: 'center' },
+  btnCambiarText: { color: '#fff', fontSize: 12, fontWeight: 'bold', marginLeft: 6 },
+  row: { flexDirection: 'row', gap: 10, marginBottom: 10 },
+  cardPrimary: { flex: 1, borderRadius: 16, padding: 15, minHeight: 140, justifyContent: 'space-between' },
+  iconLightWrap: { width: 40, height: 40, backgroundColor: 'rgba(255,255,255,0.8)', borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
+  cardTitle: { color: '#fff', fontSize: 16, fontWeight: 'bold', marginTop: 15 },
+  cardSubtitle: { color: 'rgba(255,255,255,0.8)', fontSize: 11 },
+  chevronPos: { position: 'absolute', right: 15, bottom: 20 },
+  cameraContainer: { flex: 1, justifyContent: 'flex-end' },
+  cameraOverlay: { position: 'absolute', bottom: 40, left: 20, right: 20, alignItems: 'center' },
+  btnCloseCamera: { backgroundColor: '#ef4444', padding: 15, borderRadius: 8, width: '100%', alignItems: 'center' },
+});

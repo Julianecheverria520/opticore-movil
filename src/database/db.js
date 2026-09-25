@@ -1,0 +1,145 @@
+import * as SQLite from 'expo-sqlite';
+
+const MIGRACIONES = [
+  async (db) => {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS equipos (
+        id INTEGER PRIMARY KEY NOT NULL, placa TEXT, tipo TEXT, estado TEXT,
+        ultimo_odometro REAL DEFAULT 0, ultimo_horometro REAL DEFAULT 0
+      );
+      CREATE TABLE IF NOT EXISTS categorias (id INTEGER PRIMARY KEY NOT NULL, nombre TEXT);
+      CREATE TABLE IF NOT EXISTS preguntas (
+        id INTEGER PRIMARY KEY NOT NULL, categoria TEXT, pregunta TEXT,
+        es_critica INTEGER, tipo_activo_id INTEGER
+      );
+      CREATE TABLE IF NOT EXISTS reportes_pendientes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, equipo_id TEXT, usuario_id INTEGER,
+        odometro REAL DEFAULT 0, horometro REAL DEFAULT 0, estado_equipo TEXT,
+        fecha TEXT, respuestas_json TEXT, sync_status TEXT DEFAULT 'pending'
+      );
+      CREATE TABLE IF NOT EXISTS tanqueos_pendientes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, placa TEXT, cantidad_galones REAL,
+        valor_total REAL, proveedor TEXT, tanque_lleno INTEGER,
+        odometro_tanqueo REAL, horometro_tanqueo REAL, fecha TEXT,
+        sync_status TEXT DEFAULT 'pending'
+      );
+    `);
+  },
+  async (db) => {
+    const columnas = async (t) => (await db.getAllAsync(`PRAGMA table_info(${t})`)).map((c) => c.name);
+    const agregar = async (tabla, def) => {
+      if (!(await columnas(tabla)).includes(def.split(' ')[0])) {
+        await db.execAsync(`ALTER TABLE ${tabla} ADD COLUMN ${def}`);
+      }
+    };
+    const comunes = ['uuid TEXT', 'usuario TEXT', 'fecha_iso TEXT', 'observaciones TEXT',
+      'latitud REAL', 'longitud REAL', 'intentos INTEGER DEFAULT 0', 'ultimo_error TEXT'];
+
+    for (const d of [...comunes, 'odometro_anterior REAL DEFAULT 0', 'horometro_anterior REAL DEFAULT 0'])
+      await agregar('reportes_pendientes', d);
+    for (const d of comunes) await agregar('tanqueos_pendientes', d);
+    for (const d of ['tiene_horometro INTEGER', 'tiene_odometro INTEGER']) await agregar('equipos', d);
+
+    await db.execAsync(`
+      UPDATE reportes_pendientes SET uuid = lower(hex(randomblob(16))) WHERE uuid IS NULL;
+      UPDATE tanqueos_pendientes SET uuid = lower(hex(randomblob(16))) WHERE uuid IS NULL;
+      CREATE INDEX IF NOT EXISTS idx_equipos_placa ON equipos(placa);
+      CREATE INDEX IF NOT EXISTS idx_rep_status ON reportes_pendientes(sync_status);
+      CREATE INDEX IF NOT EXISTS idx_tanq_status ON tanqueos_pendientes(sync_status);
+    `);
+  },
+  // v3 · Fase 1 offline
+  async (db) => {
+    const columnas = (await db.getAllAsync('PRAGMA table_info(equipos)')).map((c) => c.name);
+    for (const def of ['tipo_activo_id INTEGER', 'capacidad_tanque_gal REAL', 'meta_rendimiento REAL']) {
+      if (!columnas.includes(def.split(' ')[0])) await db.execAsync(`ALTER TABLE equipos ADD COLUMN ${def}`);
+    }
+    // Antes las preguntas generales se guardaban con tipo_activo_id = 0; ahora NULL (igual que el servidor)
+    await db.execAsync('UPDATE preguntas SET tipo_activo_id = NULL WHERE tipo_activo_id = 0;');
+
+    // E2 · Los tanqueos capturados con la versión anterior pudieron guardar "150.000" como 150.
+    // No se corrigen solos (no hay forma segura de saberlo); se marcan para revisión en la web.
+    await db.execAsync(`
+      UPDATE tanqueos_pendientes
+         SET observaciones = TRIM(COALESCE(observaciones, '') ||
+             ' [REVISAR VALOR: posible error de separador de miles en la versión anterior de la app]')
+       WHERE sync_status != 'synced' AND cantidad_galones > 0
+         AND valor_total / cantidad_galones < 1000;
+    `);
+  },
+];
+
+async function migrar(db) {
+  const { user_version } = await db.getFirstAsync('PRAGMA user_version');
+  for (let v = user_version; v < MIGRACIONES.length; v++) {
+    await db.withTransactionAsync(async () => {
+      await MIGRACIONES[v](db);
+      await db.execAsync(`PRAGMA user_version = ${v + 1}`);
+    });
+  }
+}
+
+let _db = null;
+let _abriendo = null;
+
+export async function getDb() {
+  if (_db) return _db;
+  if (!_abriendo) {
+    _abriendo = (async () => {
+      const db = await SQLite.openDatabaseAsync('opticore_offline.db');
+      await db.execAsync('PRAGMA journal_mode = WAL;');
+      await migrar(db);
+      _db = db;
+      return db;
+    })().catch((e) => { _abriendo = null; throw e; });
+  }
+  return _abriendo;
+}
+
+export async function iniciarBaseDeDatos() {
+  const db = await getDb();
+  console.log('Base de datos local lista (offline).');
+  return db;
+}
+
+export function nuevoUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
+export function ahoraISO() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  const off = -d.getTimezoneOffset();
+  const signo = off >= 0 ? '+' : '-';
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}` +
+    `${signo}${p(Math.floor(Math.abs(off) / 60))}:${p(Math.abs(off) % 60)}`;
+}
+
+export function parseNum(t) {
+  const n = parseFloat(String(t ?? '').trim().replace(',', '.'));
+  return isNaN(n) ? 0 : n;
+}
+
+/**
+ * Pesos colombianos escritos como los escribe un operador:
+ * "150000", "150.000", "150,000", "1.500.000", "1.500.000,50", "$ 150.000"
+ */
+export function parseMoneda(t) {
+  let s = String(t ?? '').trim().replace(/[\s$]/g, '');
+  if (!s) return 0;
+  if (s.includes(',') && s.includes('.')) s = s.replace(/\./g, '').replace(',', '.');
+  else if (/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, '');
+  else if (/^\d{1,3}(,\d{3})+$/.test(s)) s = s.replace(/,/g, '');
+  else if (s.includes(',')) s = s.replace(',', '.');
+  const n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
+}
+
+export function esMaquinaria(eq) {
+  if (!eq) return false;
+  if (eq.tiene_horometro !== null && eq.tiene_horometro !== undefined) return eq.tiene_horometro === 1;
+  return /retro|excavadora|cargador|compresor/i.test(eq.tipo || '');
+}
