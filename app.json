@@ -39,7 +39,10 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "OptiCore guarda la ubicación de cada preoperacional y tanqueo como evidencia del registro."
+          "locationWhenInUsePermission": "OptiCore guarda la ubicación de cada preoperacional y tanqueo como evidencia del registro.",
+          "locationAlwaysAndWhenInUsePermission": "OptiCore registra el recorrido de la volqueta durante un viaje, incluso con la pantalla apagada.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
         }
       ]
     ],
