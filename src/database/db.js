@@ -97,7 +97,7 @@ const MIGRACIONES = [
         fecha_inicio_iso TEXT, fecha_fin_iso TEXT,
         lat_inicio REAL, lon_inicio REAL, lat_fin REAL, lon_fin REAL,
         foto_inicio_path TEXT, foto_fin_path TEXT,
-        estado_local TEXT NOT NULL DEFAULT 'EN_CURSO',   -- EN_CURSO | FINALIZADO
+        estado_local TEXT NOT NULL DEFAULT 'EN_CURSO',   -- EN_CURSO | FINALIZADO | DESCARTADO
         id_viaje_servidor TEXT,
         requiere_revision INTEGER DEFAULT 0, motivo_revision TEXT,
         sync_inicio TEXT DEFAULT 'pending',

@@ -11,7 +11,7 @@ import { getDb, esMaquinaria } from '../database/db';
 import { sincronizarDatosMaestros, ultimoMotivoSync } from '../database/sync';
 import { enviarPendientes, contarPendientes, iniciarAutoSync } from '../database/syncUp';
 import { API_URL } from '../config';
-import { viajeEnCurso } from '../viajes';
+import { viajeEnCurso, viajesConProblema } from '../viajes';
 import { asegurarGPS } from '../gps/control';
 
 // R7 · Estado de conexión con tres causas distintas, para que el operador sepa qué hacer
@@ -41,7 +41,12 @@ export default function HomeScreen({ navigation }) {
 
   // Viaje en curso en este celular (solo puede haber uno)
   const [viajeActivo, setViajeActivo] = useState(null);
-  const refrescarViaje = useCallback(async () => { try { setViajeActivo(await viajeEnCurso()); } catch {} }, []);
+  // Viaje con problema de envío (error permanente): la franja lleva a reintentar o descartar
+  const [viajeProblema, setViajeProblema] = useState(null);
+  const refrescarViaje = useCallback(async () => {
+    try { setViajeActivo(await viajeEnCurso()); } catch {}
+    try { setViajeProblema((await viajesConProblema())[0] || null); } catch {}
+  }, []);
 
   const sincronizarFondo = useCallback(async () => {
     if (sincronizando.current) return;
@@ -224,6 +229,17 @@ export default function HomeScreen({ navigation }) {
     </TouchableOpacity>
   ) : null;
 
+  const avisoProblema = viajeProblema && viajeProblema.uuid !== viajeActivo?.uuid ? (
+    <TouchableOpacity style={styles.bannerProblema} onPress={() => navigation.navigate('ViajeEnCurso', { uuid: viajeProblema.uuid })}>
+      <FontAwesome5 name="exclamation-triangle" size={16} color="#fff" />
+      <View style={{ flex: 1, marginLeft: 10 }}>
+        <Text style={[styles.bannerTitulo, { color: '#fff' }]}>Viaje con problema de envío • {viajeProblema.placa}</Text>
+        <Text style={[styles.bannerTexto, { color: '#fee2e2' }]}>Remisión {viajeProblema.remision} • toca para reintentar o descartar</Text>
+      </View>
+      <FontAwesome5 name="chevron-right" size={12} color="#fff" />
+    </TouchableOpacity>
+  ) : null;
+
   const abrirViaje = () => {
     if (viajeActivo) navigation.navigate('ViajeEnCurso', { uuid: viajeActivo.uuid });
     else navigation.navigate('Viaje', { placa: equipoActual.placa });
@@ -257,6 +273,7 @@ export default function HomeScreen({ navigation }) {
           </View>
           {avisoSesion}
           {avisoViaje}
+          {avisoProblema}
           <TouchableOpacity style={styles.btnQrGiant} onPress={() => { setScanned(false); setShowCamera(true); }}>
             <FontAwesome5 name="qrcode" size={40} color="#fff" style={{ marginBottom: 15 }} />
             <Text style={styles.btnQrTextGiant}>Escanear Código QR</Text>
@@ -314,6 +331,7 @@ export default function HomeScreen({ navigation }) {
 
         {avisoSesion}
         {avisoViaje}
+        {avisoProblema}
 
         <View style={styles.equipoCard}>
           <View style={styles.equipoIconWrap}><FontAwesome5 name={equipoActual.usaHoras ? 'tractor' : 'truck'} size={28} color="#fff" /></View>
@@ -384,6 +402,7 @@ const styles = StyleSheet.create({
   bannerSesion: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fbbf24', borderRadius: 12, padding: 14, marginBottom: 15 },
   bannerTitulo: { color: '#0f172a', fontWeight: '900', fontSize: 14 },
   bannerViaje: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fcd34d', borderRadius: 12, padding: 14, marginBottom: 15 },
+  bannerProblema: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#dc2626', borderRadius: 12, padding: 14, marginBottom: 15 },
   bannerTexto: { color: '#1e293b', fontSize: 12, marginTop: 2 },
   btnCerrarModal: { position: 'absolute', top: 50, right: 20, backgroundColor: '#1e293b', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8 },
   btnCerrarModalText: { color: '#fff', fontWeight: 'bold' },

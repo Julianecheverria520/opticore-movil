@@ -406,8 +406,8 @@ export async function enviarPendientes(opciones = {}) {
     for (const { tabla } of COLAS) {
       await db.runAsync(`DELETE FROM ${tabla} WHERE sync_status = 'synced' AND fecha < datetime('now','-14 days','localtime')`);
     }
-    await db.runAsync(`DELETE FROM puntos_gps WHERE viaje_uuid IN (SELECT uuid FROM viajes_locales WHERE sync_status = 'synced' AND fecha < datetime('now','-14 days','localtime'))`);
-    await db.runAsync(`DELETE FROM viajes_locales WHERE sync_status = 'synced' AND fecha < datetime('now','-14 days','localtime')`);
+    await db.runAsync(`DELETE FROM puntos_gps WHERE viaje_uuid IN (SELECT uuid FROM viajes_locales WHERE sync_status IN ('synced', 'descartado') AND fecha < datetime('now','-14 days','localtime'))`);
+    await db.runAsync(`DELETE FROM viajes_locales WHERE sync_status IN ('synced', 'descartado') AND fecha < datetime('now','-14 days','localtime')`);
     return total;
   } catch (e) {
     console.warn('Error enviando pendientes:', e?.message || e);
@@ -433,7 +433,7 @@ export async function contarPendientes() {
   );
   const ve = await db.getFirstAsync(
     `SELECT COUNT(*) AS n FROM viajes_locales
-      WHERE sync_status = 'error' OR sync_foto_inicio = 'error' OR sync_foto_fin = 'error'`
+      WHERE sync_status <> 'descartado' AND (sync_status = 'error' OR sync_foto_inicio = 'error' OR sync_foto_fin = 'error')`
   );
   return { pendientes: (await contar('pending')) + (vp?.n || 0), errores: (await contar('error')) + (ve?.n || 0) };
 }

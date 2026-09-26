@@ -259,3 +259,60 @@ export async function finalizarViajeLocal(uuid, { fotoFinPath, lat, lon, fechaFi
   );
   return obtenerViaje(uuid);
 }
+
+// ── VIAJES CON PROBLEMA DE ENVÍO ──────────────────────────────────────────────
+// Error permanente de una etapa (4xx o 5 fallas), foto con error o puntos rechazados.
+// El conductor decide: reintentar o descartar (sync_status = 'descartado').
+
+const COND_PROBLEMA = `sync_status <> 'descartado' AND (
+    sync_status = 'error' OR sync_foto_inicio = 'error' OR sync_foto_fin = 'error'
+    OR EXISTS (SELECT 1 FROM puntos_gps p WHERE p.viaje_uuid = viajes_locales.uuid AND p.enviado = -1))`;
+
+/** Viajes de este celular con algún problema de envío (el más reciente primero). */
+export async function viajesConProblema() {
+  const db = await getDb();
+  return db.getAllAsync(`SELECT * FROM viajes_locales WHERE ${COND_PROBLEMA} ORDER BY id DESC`);
+}
+
+/** ¿Este viaje tiene un problema que el conductor puede reintentar o descartar? */
+export async function tieneProblema(uuid) {
+  const db = await getDb();
+  return !!(await db.getFirstAsync(`SELECT 1 AS si FROM viajes_locales WHERE uuid = ? AND ${COND_PROBLEMA}`, uuid));
+}
+
+/** Vuelve a poner en cola lo que quedó con error (etapas y puntos rechazados). */
+export async function reintentarViaje(uuid) {
+  const db = await getDb();
+  const reabrir = (c) => `${c} = CASE WHEN ${c} = 'error' THEN 'pending' ELSE ${c} END`;
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      `UPDATE viajes_locales SET ${['sync_inicio', 'sync_foto_inicio', 'sync_foto_fin', 'sync_fin'].map(reabrir).join(', ')},
+              sync_status = 'pending', intentos_etapa = NULL, ultimo_error = NULL
+        WHERE uuid = ? AND sync_status <> 'descartado'`, uuid
+    );
+    await db.runAsync('UPDATE puntos_gps SET enviado = 0 WHERE viaje_uuid = ? AND enviado = -1', uuid);
+  });
+  return obtenerViaje(uuid);
+}
+
+/**
+ * Deja de enviar lo que falte del viaje: borra del celular sus fotos y los puntos no
+ * enviados. Si estaba EN_CURSO pasa a DESCARTADO (el GPS lo detiene la pantalla y, si no,
+ * la tarea al no encontrar viaje en curso). Lo que ya llegó al servidor no se toca.
+ */
+export async function descartarViaje(uuid) {
+  const db = await getDb();
+  const v = await obtenerViaje(uuid);
+  if (!v) return null;
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      `UPDATE viajes_locales SET sync_status = 'descartado',
+              estado_local = CASE WHEN estado_local = 'EN_CURSO' THEN 'DESCARTADO' ELSE estado_local END
+        WHERE uuid = ?`, uuid
+    );
+    await db.runAsync('DELETE FROM puntos_gps WHERE viaje_uuid = ? AND enviado <> 1', uuid);
+  });
+  borrarArchivo(v.foto_inicio_path);
+  borrarArchivo(v.foto_fin_path);
+  return obtenerViaje(uuid);
+}

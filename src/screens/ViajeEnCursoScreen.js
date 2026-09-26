@@ -6,7 +6,7 @@ import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
 
 import { enviarPendientes } from '../database/syncUp';
-import { obtenerViaje, viajeEnCurso, guardarFoto, borrarArchivo, finalizarViajeLocal } from '../viajes';
+import { obtenerViaje, viajeEnCurso, guardarFoto, borrarArchivo, finalizarViajeLocal, tieneProblema, reintentarViaje, descartarViaje } from '../viajes';
 import { estadoGPS, iniciarGPS, detenerGPS } from '../gps/control';
 import { estadisticasRecorrido, PRECISION_MAXIMA_M } from '../gps/puntos';
 
@@ -68,6 +68,7 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
   const [finalizando, setFinalizando] = useState(false);
   const [gps, setGps] = useState(null);
   const [recorrido, setRecorrido] = useState(null);
+  const [problema, setProblema] = useState(false);
 
   const recargar = useCallback(async () => {
     const v = route.params?.uuid ? await obtenerViaje(route.params.uuid) : await viajeEnCurso();
@@ -75,6 +76,7 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
     if (v) {
       setRecorrido(await estadisticasRecorrido(v.uuid));
       setGps(await estadoGPS());
+      setProblema(await tieneProblema(v.uuid));
     }
     setCargando(false);
   }, [route.params?.uuid]);
@@ -124,6 +126,37 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
     ]);
   };
 
+  const reintentar = async () => {
+    setEnviando(true);
+    try {
+      await reintentarViaje(viaje.uuid);
+      await enviarPendientes({ forzarFotos: true });
+    } finally { await recargar(); setEnviando(false); }
+  };
+
+  const descartar = () => {
+    const enServidor = viaje.sync_inicio === 'synced';
+    const numero = viaje.id_viaje_servidor ? ` (#${viaje.id_viaje_servidor})` : '';
+    Alert.alert(
+      'Descartar envío',
+      (enServidor
+        ? `El viaje ya está en el sistema${numero}. Descartar solo deja de enviar lo que falta (fotos, puntos o cierre). Si hay que anularlo, lo hace el administrador en la web.`
+        : 'El viaje NO llegó al sistema y ya no se enviará. Se borran del celular sus fotos y su recorrido.')
+        + '\n\nEsto no se puede deshacer.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Descartar', style: 'destructive',
+          onPress: async () => {
+            if (viaje.estado_local === 'EN_CURSO') await detenerGPS();
+            await descartarViaje(viaje.uuid);
+            navigation.navigate('Home');
+          },
+        },
+      ]
+    );
+  };
+
   if (cargando) {
     return <View style={styles.centro}><ActivityIndicator size="large" color="#f59e0b" /></View>;
   }
@@ -142,6 +175,7 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
   }
 
   const enCurso = viaje.estado_local === 'EN_CURSO';
+  const descartado = viaje.sync_status === 'descartado';
   const inicioConError = viaje.sync_inicio === 'error';
 
   // Estado del GPS para el conductor
@@ -170,7 +204,7 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
         <TouchableOpacity onPress={() => navigation.navigate('Home')} style={styles.backBtn}>
           <FontAwesome5 name="arrow-left" size={20} color="#ffffff" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>{enCurso ? 'Viaje en curso' : 'Viaje finalizado'}</Text>
+        <Text style={styles.headerTitle}>{descartado ? 'Envío descartado' : enCurso ? 'Viaje en curso' : 'Viaje finalizado'}</Text>
         <View style={{ width: 20 }} />
       </View>
 
@@ -268,9 +302,29 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
           </View>
         ) : null}
 
-        <TouchableOpacity style={styles.btnSecundario} onPress={enviarAhora} disabled={enviando}>
-          {enviando ? <ActivityIndicator color="#0f172a" /> : <Text style={styles.btnSecundarioTexto}>Enviar ahora</Text>}
-        </TouchableOpacity>
+        {problema && !descartado ? (
+          <View style={styles.tarjetaProblema}>
+            <Text style={styles.problemaTitulo}><FontAwesome5 name="exclamation-triangle" size={14} color="#b91c1c" />  Problema de envío</Text>
+            <Text style={styles.problemaTexto}>Parte de este viaje no se pudo enviar (ver el diagnóstico). Si el problema ya se corrigió, reintenta. Si el viaje no debe quedar en el sistema, descártalo.</Text>
+            <TouchableOpacity style={styles.btnReintentar} onPress={reintentar} disabled={enviando}>
+              {enviando ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnReintentarTexto}>Reintentar envío</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.btnDescartar} onPress={descartar} disabled={enviando}>
+              <Text style={styles.btnDescartarTexto}>Descartar</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
+        {descartado ? (
+          <View style={styles.aviso}>
+            <FontAwesome5 name="ban" size={14} color="#92400e" style={{ marginRight: 8 }} />
+            <Text style={styles.avisoTexto}>Envío descartado en este celular: ya no se envía nada más de este viaje.</Text>
+          </View>
+        ) : (
+          <TouchableOpacity style={styles.btnSecundario} onPress={enviarAhora} disabled={enviando}>
+            {enviando ? <ActivityIndicator color="#0f172a" /> : <Text style={styles.btnSecundarioTexto}>Enviar ahora</Text>}
+          </TouchableOpacity>
+        )}
 
         {enCurso ? (
           <View style={styles.tarjetaBateria}>
@@ -336,6 +390,13 @@ const styles = StyleSheet.create({
   avisoTexto: { flex: 1, color: '#92400e', fontSize: 13, fontWeight: '600' },
   btnSecundario: { backgroundColor: '#e2e8f0', padding: 15, borderRadius: 8, alignItems: 'center', marginBottom: 12 },
   btnSecundarioTexto: { color: '#0f172a', fontWeight: '900', fontSize: 15 },
+  tarjetaProblema: { backgroundColor: '#fef2f2', borderRadius: 12, padding: 14, marginBottom: 14, borderWidth: 1, borderColor: '#fecaca' },
+  problemaTitulo: { color: '#b91c1c', fontWeight: '900', fontSize: 14, marginBottom: 6 },
+  problemaTexto: { color: '#7f1d1d', fontSize: 13, marginBottom: 10 },
+  btnReintentar: { backgroundColor: '#1d4ed8', padding: 13, borderRadius: 8, alignItems: 'center', marginBottom: 8 },
+  btnReintentarTexto: { color: '#fff', fontWeight: '900', fontSize: 15 },
+  btnDescartar: { borderWidth: 1, borderColor: '#b91c1c', padding: 12, borderRadius: 8, alignItems: 'center' },
+  btnDescartarTexto: { color: '#b91c1c', fontWeight: '900', fontSize: 15 },
   btnFinalizar: { backgroundColor: '#ef4444', padding: 18, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   btnFinalizarTexto: { color: '#fff', fontWeight: '900', fontSize: 19 },
 });
