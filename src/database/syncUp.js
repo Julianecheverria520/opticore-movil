@@ -2,7 +2,8 @@ import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getDb } from './db';
 import { API_URL } from '../config';
-import { existeArchivo, borrarArchivo } from '../viajes';
+import { existeArchivo, borrarArchivo, subirArchivo } from '../viajes';
+import { ahoraISO } from './db';
 import { lotePendiente } from '../gps/puntos';
 
 const RUTA_PREOP = '/maestros/equipos/preoperacional/guardar';
@@ -71,22 +72,23 @@ async function post(ruta, token, body) {
   }
 }
 
-/** Sube una foto (multipart) desde un archivo local del celular. */
-async function postFoto(ruta, token, uri) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), TIMEOUT_FOTO_MS);
+/** Sube una foto (multipart) con el cargador nativo de expo-file-system. */
+function postFoto(ruta, token, uri) {
+  return subirArchivo(`${API_URL}${ruta}`, token, uri, TIMEOUT_FOTO_MS);
+}
+
+/**
+ * Diagnóstico visible en "Viaje en curso": resultado del ÚLTIMO intento de cada etapa
+ * (código HTTP o "SIN RESPUESTA", mensaje y hora). Nunca rompe el envío.
+ */
+async function anotar(db, id, etapa, codigo, mensaje) {
   try {
-    const fd = new FormData();
-    fd.append('file', { uri, name: uri.split('/').pop() || 'foto.jpg', type: 'image/jpeg' });
-    return await fetch(`${API_URL}${ruta}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-      body: fd,
-      signal: ctrl.signal,
-    });
-  } finally {
-    clearTimeout(t);
-  }
+    const fila = await db.getFirstAsync('SELECT diag_envio FROM viajes_locales WHERE id = ?', id);
+    let d = {};
+    try { d = JSON.parse(fila?.diag_envio || '{}') || {}; } catch { d = {}; }
+    d[etapa] = { codigo, mensaje: String(mensaje ?? '').slice(0, 200), hora: ahoraISO() };
+    await db.runAsync('UPDATE viajes_locales SET diag_envio = ? WHERE id = ?', JSON.stringify(d), id);
+  } catch { /* el diagnóstico es informativo */ }
 }
 
 async function detalle(res) {
@@ -142,7 +144,10 @@ async function procesarCola(db, { tabla, ruta, armar }, token, usuario) {
 //   · sin red / 401 -> se detiene sin tocar nada
 //   · 4xx (salvo 408/429) -> error permanente de ESA etapa
 //   · 5xx / 408 / 429 -> reintento en la próxima pasada (MAX_INTENTOS)
-// Una foto con error permanente no bloquea el viaje; el inicio o el fin sí.
+// Las FOTOS nunca bloquean: si fallan (por lo que sea) se reintentan en la próxima
+// pasada, pero los puntos y el cierre siguen. El inicio y el fin sí son obligatorios.
+// Toda falla queda en diag_envio con su código y mensaje reales (antes una excepción
+// cualquiera se trataba en silencio como "sin red" y el viaje quedaba atascado).
 
 function payloadInicioViaje(v) {
   return {
@@ -165,20 +170,25 @@ function payloadFinViaje(v) {
 }
 
 /** Ejecuta una etapa. Devuelve 'ok' | 'permanente' | 'sin_red' | 'sesion' | 'servidor'. */
-async function etapaViaje(db, v, columna, llamar, alOk) {
+async function etapaViaje(db, v, columna, etapa, llamar, alOk) {
   let r;
-  try { r = await llamar(); } catch { return 'sin_red'; }
-  if (r.status === 401) return 'sesion';
+  try { r = await llamar(); } catch (e) {
+    await anotar(db, v.id, etapa, 'SIN RESPUESTA', e?.message || String(e));
+    return 'sin_red';
+  }
+  if (r.status === 401) { await anotar(db, v.id, etapa, 401, 'Sesión vencida'); return 'sesion'; }
 
   if (r.ok) {
     let cuerpo = {};
     try { cuerpo = await r.json(); } catch { /* respuesta sin cuerpo */ }
     await db.runAsync(`UPDATE viajes_locales SET ${columna} = 'synced', intentos = 0, ultimo_error = NULL WHERE id = ?`, v.id);
+    await anotar(db, v.id, etapa, r.status, cuerpo?.status || 'OK');
     if (alOk) await alOk(cuerpo);
     return 'ok';
   }
 
   const msg = `${r.status}: ${await detalle(r)}`;
+  await anotar(db, v.id, etapa, r.status, msg);
   const intentos = (v.intentos || 0) + 1;
   const permanente = r.status >= 400 && r.status < 500 && r.status !== 408 && r.status !== 429;
   if (permanente || intentos >= MAX_INTENTOS) {
@@ -204,7 +214,7 @@ async function procesarViajes(db, token, usuario) {
 
     // 1. INICIO (sin él, el servidor no conoce el viaje: nada más se puede subir)
     if (v.sync_inicio === 'pending') {
-      const e = await etapaViaje(db, v, 'sync_inicio', () => post(`${RUTA_VIAJES}/iniciar`, token, payloadInicioViaje(v)),
+      const e = await etapaViaje(db, v, 'sync_inicio', 'inicio', () => post(`${RUTA_VIAJES}/iniciar`, token, payloadInicioViaje(v)),
         (c) => db.runAsync(
           'UPDATE viajes_locales SET id_viaje_servidor = ?, requiere_revision = ?, motivo_revision = ? WHERE id = ?',
           c.id_viaje ?? null, c.requiere_revision ? 1 : 0, c.motivo_revision ?? null, v.id));
@@ -223,9 +233,11 @@ async function procesarViajes(db, token, usuario) {
     if (v.sync_foto_inicio === 'pending') {
       if (!existeArchivo(v.foto_inicio_path)) {
         await db.runAsync("UPDATE viajes_locales SET sync_foto_inicio = 'error', ultimo_error = 'Foto de inicio no encontrada en el celular' WHERE id = ?", v.id);
+        await anotar(db, v.id, 'foto_inicio', 'SIN ARCHIVO', 'Foto de inicio no encontrada en el celular');
       } else {
-        const e = await etapaViaje(db, v, 'sync_foto_inicio', () => postFoto(`${base}/foto?tipo=inicio`, token, v.foto_inicio_path));
-        if (DETENER[e]) return { ...res, ...DETENER[e] };
+        const e = await etapaViaje(db, v, 'sync_foto_inicio', 'foto_inicio', () => postFoto(`${base}/foto?tipo=inicio`, token, v.foto_inicio_path));
+        if (e === 'sesion') return { ...res, ...DETENER[e] };
+        // cualquier otro fallo de la foto NO detiene: los puntos y el cierre siguen
       }
       await recargar();
     }
@@ -242,11 +254,21 @@ async function procesarViajes(db, token, usuario) {
         r = await post(`${base}/puntos`, token, {
           puntos: puntos.map((p) => ({ seq: p.seq, latitud: p.latitud, longitud: p.longitud, precision: p.precision, velocidad: p.velocidad, ts: p.ts_iso })),
         });
-      } catch { return { ...res, sinRed: true }; }
-      if (r.status === 401) return { ...res, sesionExpirada: true };
-      if (r.ok) { await marcar(1); continue; }
+      } catch (e) {
+        await anotar(db, v.id, 'puntos', 'SIN RESPUESTA', e?.message || String(e));
+        return { ...res, sinRed: true };
+      }
+      if (r.status === 401) { await anotar(db, v.id, 'puntos', 401, 'Sesión vencida'); return { ...res, sesionExpirada: true }; }
+      if (r.ok) {
+        let c = {};
+        try { c = await r.json(); } catch { /* sin cuerpo */ }
+        await marcar(1);
+        await anotar(db, v.id, 'puntos', r.status, `Lote de ${puntos.length}: ${c.insertados ?? '?'} nuevos, ${c.ignorados ?? '?'} ya estaban`);
+        continue;
+      }
 
       const msg = `Puntos GPS ${r.status}: ${await detalle(r)}`;
+      await anotar(db, v.id, 'puntos', r.status, msg);
       if (r.status >= 400 && r.status < 500 && r.status !== 408 && r.status !== 429) {
         // Rechazo permanente de este lote: se aparta (-1) para no bloquear el resto ni el cierre
         await marcar(-1);
@@ -263,9 +285,10 @@ async function procesarViajes(db, token, usuario) {
     if (v.sync_foto_fin === 'pending') {
       if (!existeArchivo(v.foto_fin_path)) {
         await db.runAsync("UPDATE viajes_locales SET sync_foto_fin = 'error', ultimo_error = 'Foto de fin no encontrada en el celular' WHERE id = ?", v.id);
+        await anotar(db, v.id, 'foto_fin', 'SIN ARCHIVO', 'Foto de fin no encontrada en el celular');
       } else {
-        const e = await etapaViaje(db, v, 'sync_foto_fin', () => postFoto(`${base}/foto?tipo=fin`, token, v.foto_fin_path));
-        if (DETENER[e]) return { ...res, ...DETENER[e] };
+        const e = await etapaViaje(db, v, 'sync_foto_fin', 'foto_fin', () => postFoto(`${base}/foto?tipo=fin`, token, v.foto_fin_path));
+        if (e === 'sesion') return { ...res, ...DETENER[e] };
       }
       await recargar();
     }
@@ -275,7 +298,7 @@ async function procesarViajes(db, token, usuario) {
     if ((quedan?.n || 0) > 0) continue;
 
     if (v.sync_fin === 'pending') {
-      const e = await etapaViaje(db, v, 'sync_fin', () => post(`${base}/finalizar`, token, payloadFinViaje(v)));
+      const e = await etapaViaje(db, v, 'sync_fin', 'fin', () => post(`${base}/finalizar`, token, payloadFinViaje(v)));
       if (DETENER[e]) return { ...res, ...DETENER[e] };
       if (e === 'permanente') {
         await db.runAsync("UPDATE viajes_locales SET sync_status = 'error' WHERE id = ?", v.id);

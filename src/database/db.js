@@ -141,6 +141,12 @@ const MIGRACIONES = [
     const cv = (await db.getAllAsync('PRAGMA table_info(viajes_locales)')).map((c) => c.name);
     if (!cv.includes('gps_ultima_precision')) await db.execAsync('ALTER TABLE viajes_locales ADD COLUMN gps_ultima_precision REAL');
   },
+  // v7 · diagnóstico del envío: por etapa, el resultado del último intento
+  //       {"inicio": {"codigo": 200, "mensaje": "OK", "hora": "..."}, "foto_inicio": {...}, ...}
+  async (db) => {
+    const cv = (await db.getAllAsync('PRAGMA table_info(viajes_locales)')).map((c) => c.name);
+    if (!cv.includes('diag_envio')) await db.execAsync('ALTER TABLE viajes_locales ADD COLUMN diag_envio TEXT');
+  },
 ];
 
 async function migrar(db) {

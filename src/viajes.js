@@ -1,6 +1,6 @@
 // src/viajes.js · lógica de viajes sin interfaz (se puede probar fuera del celular)
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { File, Directory, Paths } from 'expo-file-system';
+import { File, Directory, Paths, UploadTask, UploadType } from 'expo-file-system';
 
 import { getDb, nuevoUUID, ahoraISO } from './database/db';
 import { fetchConTimeout } from './red';
@@ -139,6 +139,31 @@ export async function guardarFoto(uriTemporal, uuid, tipo) {
 
 export function existeArchivo(uri) {
   try { return !!uri && new File(uri).exists; } catch { return false; }
+}
+
+/**
+ * Sube un archivo como multipart/form-data (campo "file") con el cargador NATIVO de
+ * expo-file-system, sin pasar por el FormData de React Native.
+ * Devuelve un objeto con la misma forma que la respuesta de fetch ({ ok, status, json }).
+ */
+export async function subirArchivo(url, token, uri, timeoutMs = 30000) {
+  const tarea = new UploadTask(new File(uri), url, {
+    httpMethod: 'POST',
+    uploadType: UploadType.MULTIPART,
+    fieldName: 'file',
+    mimeType: 'image/jpeg',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const t = setTimeout(() => { try { tarea.cancel(); } catch { /* ya terminó */ } }, timeoutMs);
+  try {
+    const r = await tarea.uploadAsync();
+    const status = Number(r?.status) || 0;
+    const cuerpo = r?.body ?? '';
+    return { ok: status >= 200 && status < 300, status, json: async () => JSON.parse(cuerpo || '{}') };
+  } finally {
+    clearTimeout(t);
+    try { tarea.release(); } catch { /* sin recursos que liberar */ }
+  }
 }
 
 export function borrarArchivo(uri) {

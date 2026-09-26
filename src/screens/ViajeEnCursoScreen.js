@@ -16,6 +16,19 @@ const MINUTOS_SIN_MOVIMIENTO = 3;
 
 function hora(iso) { return iso ? String(iso).slice(11, 19) : '—'; }
 
+// Diagnóstico del envío (diag_envio): último intento de cada etapa
+const ETAPAS_DIAG = [
+  ['inicio', 'Inicio'], ['foto_inicio', 'Foto de carga'], ['puntos', 'Puntos GPS'],
+  ['foto_fin', 'Foto de descarga'], ['fin', 'Cierre'],
+];
+function leerDiag(texto) { try { return JSON.parse(texto || '{}') || {}; } catch { return {}; } }
+function colorCodigo(c) {
+  const n = Number(c);
+  if (n >= 200 && n < 300) return '#10b981';
+  if (n >= 500 || c === 'SIN RESPUESTA') return '#f59e0b';
+  return '#ef4444';
+}
+
 // Cómo se muestra cada estado de una etapa del envío
 const ETAPA = {
   synced: { texto: 'Enviado', color: '#10b981', icono: 'check-circle' },
@@ -216,6 +229,23 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
           <FilaEtapa titulo="Cierre del viaje" estado={enCurso ? 'pending' : viaje.sync_fin} nota={enCurso ? 'Al finalizar' : null} />
         </View>
 
+        <Text style={styles.subtitulo}>Diagnóstico de envío (último intento)</Text>
+        <View style={styles.tarjetaEtapas}>
+          {ETAPAS_DIAG.map(([clave, titulo]) => {
+            const d = leerDiag(viaje.diag_envio)[clave];
+            return (
+              <View key={clave} style={styles.filaDiag}>
+                <View style={styles.filaDiagCabeza}>
+                  <Text style={styles.filaEtapaTitulo}>{titulo}</Text>
+                  <Text style={[styles.diagCodigo, { color: d ? colorCodigo(d.codigo) : '#94a3b8' }]}>{d ? String(d.codigo) : 'sin intentos'}</Text>
+                  <Text style={styles.diagHora}>{d ? hora(d.hora) : ''}</Text>
+                </View>
+                {d && d.mensaje ? <Text style={styles.diagMensaje} selectable>{d.mensaje}</Text> : null}
+              </View>
+            );
+          })}
+        </View>
+
         {viaje.requiere_revision ? (
           <View style={styles.aviso}>
             <FontAwesome5 name="exclamation-triangle" size={14} color="#92400e" style={{ marginRight: 8 }} />
@@ -283,6 +313,11 @@ const styles = StyleSheet.create({
   filaDato: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10, borderBottomWidth: 1, borderColor: '#f1f5f9' },
   datoEtiqueta: { fontSize: 14, color: '#475569' },
   datoValor: { fontSize: 14, color: '#0f172a', fontWeight: '800' },
+  filaDiag: { paddingVertical: 10, borderBottomWidth: 1, borderColor: '#f1f5f9' },
+  filaDiagCabeza: { flexDirection: 'row', alignItems: 'center' },
+  diagCodigo: { fontSize: 13, fontWeight: '900', marginRight: 10 },
+  diagHora: { fontSize: 12, color: '#64748b', minWidth: 60, textAlign: 'right' },
+  diagMensaje: { fontSize: 12, color: '#475569', marginTop: 4 },
   enlace: { color: '#1d4ed8', fontWeight: '900', fontSize: 13, marginTop: 6, textDecorationLine: 'underline' },
   negrita: { fontWeight: '900' },
   tarjetaBateria: { backgroundColor: '#eff6ff', borderRadius: 12, padding: 14, marginBottom: 14, borderWidth: 1, borderColor: '#bfdbfe' },
