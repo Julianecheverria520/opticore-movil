@@ -67,6 +67,62 @@ const MIGRACIONES = [
          AND valor_total / cantidad_galones < 1000;
     `);
   },
+  // v4 · Viajes con GPS (pasos 7 y 8 del plan)
+  async (db) => {
+    const columnas = (await db.getAllAsync('PRAGMA table_info(equipos)')).map((c) => c.name);
+    for (const def of ['requiere_cantidad INTEGER', 'capacidad_m3 REAL', 'capacidad_ton REAL', 'ultimo_preop_fecha TEXT']) {
+      if (!columnas.includes(def.split(' ')[0])) await db.execAsync(`ALTER TABLE equipos ADD COLUMN ${def}`);
+    }
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS materiales (
+        id INTEGER PRIMARY KEY NOT NULL, nombre TEXT, unidad TEXT
+      );
+      CREATE TABLE IF NOT EXISTS rutas (
+        id INTEGER PRIMARY KEY NOT NULL, nombre TEXT, distancia_km REAL,
+        origen TEXT, destino TEXT,
+        origen_lat REAL, origen_lon REAL, destino_lat REAL, destino_lon REAL
+      );
+
+      -- Un viaje creado en el celular. uuid = uuid_cliente del servidor (idempotencia).
+      -- Cada etapa del envío tiene su propio estado ('pending' | 'synced' | 'error'):
+      -- inicio -> foto_inicio -> (puntos, pasos 9-10) -> foto_fin -> fin.
+      CREATE TABLE IF NOT EXISTS viajes_locales (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uuid TEXT NOT NULL UNIQUE,
+        usuario TEXT,
+        placa TEXT NOT NULL,
+        material TEXT, origen TEXT, destino TEXT, ruta_id INTEGER, ruta_nombre TEXT,
+        remision TEXT, cantidad REAL,
+        fecha TEXT,                       -- datetime local (limpieza de enviados, igual que las otras colas)
+        fecha_inicio_iso TEXT, fecha_fin_iso TEXT,
+        lat_inicio REAL, lon_inicio REAL, lat_fin REAL, lon_fin REAL,
+        foto_inicio_path TEXT, foto_fin_path TEXT,
+        estado_local TEXT NOT NULL DEFAULT 'EN_CURSO',   -- EN_CURSO | FINALIZADO
+        id_viaje_servidor TEXT,
+        requiere_revision INTEGER DEFAULT 0, motivo_revision TEXT,
+        sync_inicio TEXT DEFAULT 'pending',
+        sync_foto_inicio TEXT DEFAULT 'pending',
+        sync_foto_fin TEXT DEFAULT 'pending',
+        sync_fin TEXT DEFAULT 'pending',
+        sync_status TEXT DEFAULT 'pending',               -- global: pending | synced | error
+        intentos INTEGER DEFAULT 0, ultimo_error TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_viajes_estado ON viajes_locales(estado_local);
+      CREATE INDEX IF NOT EXISTS idx_viajes_status ON viajes_locales(sync_status);
+
+      -- Puntos del recorrido (se llenan en los pasos 9 y 10). seq = consecutivo por viaje.
+      CREATE TABLE IF NOT EXISTS puntos_gps (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        viaje_uuid TEXT NOT NULL,
+        seq INTEGER NOT NULL,
+        latitud REAL, longitud REAL, precision REAL, velocidad REAL,
+        ts_iso TEXT,
+        enviado INTEGER DEFAULT 0,
+        UNIQUE (viaje_uuid, seq)
+      );
+      CREATE INDEX IF NOT EXISTS idx_puntos_envio ON puntos_gps(viaje_uuid, enviado);
+    `);
+  },
 ];
 
 async function migrar(db) {
