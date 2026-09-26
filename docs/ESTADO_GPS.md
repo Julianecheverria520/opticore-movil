@@ -1,6 +1,6 @@
 # Estado: viajes con GPS en la app (opticore-movil + AppTransporte)
 
-Última actualización: 2026-09-25. AppTransporte: commits locales sin push. opticore-movil: ver §6 (remoto).
+Última actualización: 2026-09-25. AppTransporte: al día con `origin/main`. opticore-movil: sin remoto, ver §6.
 Leer este archivo al empezar cualquier sesión sobre viajes/GPS.
 
 ---
