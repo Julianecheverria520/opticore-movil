@@ -135,6 +135,12 @@ const MIGRACIONES = [
       await db.execAsync('ALTER TABLE puntos_gps ADD COLUMN simulado INTEGER DEFAULT 0');
     }
   },
+  // v6 · precisión de la última lectura RECIBIDA (aunque se haya descartado por mala):
+  // distingue "esperando señal GPS" de "detenido / sin movimiento"
+  async (db) => {
+    const cv = (await db.getAllAsync('PRAGMA table_info(viajes_locales)')).map((c) => c.name);
+    if (!cv.includes('gps_ultima_precision')) await db.execAsync('ALTER TABLE viajes_locales ADD COLUMN gps_ultima_precision REAL');
+  },
 ];
 
 async function migrar(db) {

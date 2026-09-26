@@ -8,10 +8,11 @@ import * as ImagePicker from 'expo-image-picker';
 import { enviarPendientes } from '../database/syncUp';
 import { obtenerViaje, viajeEnCurso, guardarFoto, borrarArchivo, finalizarViajeLocal } from '../viajes';
 import { estadoGPS, iniciarGPS, detenerGPS } from '../gps/control';
-import { estadisticasRecorrido } from '../gps/puntos';
+import { estadisticasRecorrido, PRECISION_MAXIMA_M } from '../gps/puntos';
 
-// Sin ningún punto nuevo en este tiempo (con el GPS corriendo) se muestra "esperando señal GPS"
-const MINUTOS_SIN_SENAL = 3;
+// Con el GPS corriendo y buena señal, si no llega ningún punto nuevo en este tiempo es
+// porque el vehículo no se mueve (el GPS solo entrega puntos cada 30 m)
+const MINUTOS_SIN_MOVIMIENTO = 3;
 
 function hora(iso) { return iso ? String(iso).slice(11, 19) : '—'; }
 
@@ -134,8 +135,12 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
     if (!gps.permisoPrimerPlano) estadoGps = { texto: 'Sin permiso de ubicación', color: '#ef4444', icono: 'ban' };
     else if (!gps.ubicacionActivada) estadoGps = { texto: 'Ubicación del celular apagada', color: '#ef4444', icono: 'map-marker-alt' };
     else if (!gps.corriendo) estadoGps = { texto: 'GPS detenido', color: '#ef4444', icono: 'exclamation-circle' };
-    else if (minutosSinPunto === null || minutosSinPunto > MINUTOS_SIN_SENAL) estadoGps = { texto: 'Esperando señal GPS', color: '#f59e0b', icono: 'satellite-dish' };
-    else estadoGps = { texto: 'Activo', color: '#10b981', icono: 'satellite-dish' };
+    // "Esperando señal": nunca ha llegado un punto, o la última lectura tuvo mala precisión
+    else if (minutosSinPunto === null || (viaje.gps_ultima_precision != null && viaje.gps_ultima_precision > PRECISION_MAXIMA_M)) {
+      estadoGps = { texto: 'Esperando señal GPS', color: '#f59e0b', icono: 'satellite-dish' };
+    } else if (minutosSinPunto > MINUTOS_SIN_MOVIMIENTO) {
+      estadoGps = { texto: 'Detenido / sin movimiento', color: '#64748b', icono: 'pause-circle' };
+    } else estadoGps = { texto: 'Activo', color: '#10b981', icono: 'satellite-dish' };
   }
   const reintentarGps = async () => { await iniciarGPS(viaje.placa); recargar(); };
 

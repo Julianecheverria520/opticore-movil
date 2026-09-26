@@ -62,10 +62,12 @@ export async function guardarUbicaciones(locations = []) {
     ultimoMs = ts;
   }
 
+  // Precisión de la lectura más reciente recibida, aunque se haya descartado
+  const masReciente = lista.length ? lista[lista.length - 1].coords.accuracy : null;
   await db.runAsync(
     `UPDATE viajes_locales SET gps_descartados = COALESCE(gps_descartados, 0) + ?, gps_simulados = COALESCE(gps_simulados, 0) + ?,
-       gps_ultimo_evento = ? WHERE uuid = ?`,
-    res.descartados, res.simulados, isoLocal(Date.now()), viaje.uuid
+       gps_ultimo_evento = ?, gps_ultima_precision = COALESCE(?, gps_ultima_precision) WHERE uuid = ?`,
+    res.descartados, res.simulados, isoLocal(Date.now()), masReciente ?? null, viaje.uuid
   );
   return res;
 }
