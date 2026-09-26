@@ -2,7 +2,7 @@ import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getDb } from './db';
 import { API_URL } from '../config';
-import { existeArchivo, borrarArchivo, subirArchivo } from '../viajes';
+import { existeArchivo, borrarArchivo, subirArchivo, tamanoKB } from '../viajes';
 import { ahoraISO } from './db';
 import { lotePendiente } from '../gps/puntos';
 
@@ -75,6 +75,17 @@ async function post(ruta, token, body) {
 /** Sube una foto (multipart) con el cargador nativo de expo-file-system. */
 function postFoto(ruta, token, uri) {
   return subirArchivo(`${API_URL}${ruta}`, token, uri, TIMEOUT_FOTO_MS);
+}
+
+/**
+ * Etapa de foto con medición: el diagnóstico muestra el tamaño en KB (leído ANTES de
+ * subir) y cuánto tardó, para saber si una foto grande con señal débil agota el tiempo.
+ */
+function etapaFoto(db, v, columna, etapa, ruta, token, uri) {
+  const kb = tamanoKB(uri);
+  let t0 = 0;
+  const prefijo = () => `${kb ?? '?'} KB · ${((Date.now() - t0) / 1000).toFixed(1)} s (límite ${TIMEOUT_FOTO_MS / 1000} s)`;
+  return etapaViaje(db, v, columna, etapa, () => { t0 = Date.now(); return postFoto(ruta, token, uri); }, null, prefijo);
 }
 
 /**
@@ -170,10 +181,11 @@ function payloadFinViaje(v) {
 }
 
 /** Ejecuta una etapa. Devuelve 'ok' | 'permanente' | 'sin_red' | 'sesion' | 'servidor'. */
-async function etapaViaje(db, v, columna, etapa, llamar, alOk) {
+async function etapaViaje(db, v, columna, etapa, llamar, alOk, prefijo) {
+  const con = (m) => (prefijo ? `${prefijo()} · ${m}` : m);
   let r;
   try { r = await llamar(); } catch (e) {
-    await anotar(db, v.id, etapa, 'SIN RESPUESTA', e?.message || String(e));
+    await anotar(db, v.id, etapa, 'SIN RESPUESTA', con(e?.message || String(e)));
     return 'sin_red';
   }
   if (r.status === 401) { await anotar(db, v.id, etapa, 401, 'Sesión vencida'); return 'sesion'; }
@@ -182,13 +194,13 @@ async function etapaViaje(db, v, columna, etapa, llamar, alOk) {
     let cuerpo = {};
     try { cuerpo = await r.json(); } catch { /* respuesta sin cuerpo */ }
     await db.runAsync(`UPDATE viajes_locales SET ${columna} = 'synced', intentos = 0, ultimo_error = NULL WHERE id = ?`, v.id);
-    await anotar(db, v.id, etapa, r.status, cuerpo?.status || 'OK');
+    await anotar(db, v.id, etapa, r.status, con(cuerpo?.status || 'OK'));
     if (alOk) await alOk(cuerpo);
     return 'ok';
   }
 
   const msg = `${r.status}: ${await detalle(r)}`;
-  await anotar(db, v.id, etapa, r.status, msg);
+  await anotar(db, v.id, etapa, r.status, con(msg));
   const intentos = (v.intentos || 0) + 1;
   const permanente = r.status >= 400 && r.status < 500 && r.status !== 408 && r.status !== 429;
   if (permanente || intentos >= MAX_INTENTOS) {
@@ -235,7 +247,7 @@ async function procesarViajes(db, token, usuario) {
         await db.runAsync("UPDATE viajes_locales SET sync_foto_inicio = 'error', ultimo_error = 'Foto de inicio no encontrada en el celular' WHERE id = ?", v.id);
         await anotar(db, v.id, 'foto_inicio', 'SIN ARCHIVO', 'Foto de inicio no encontrada en el celular');
       } else {
-        const e = await etapaViaje(db, v, 'sync_foto_inicio', 'foto_inicio', () => postFoto(`${base}/foto?tipo=inicio`, token, v.foto_inicio_path));
+        const e = await etapaFoto(db, v, 'sync_foto_inicio', 'foto_inicio', `${base}/foto?tipo=inicio`, token, v.foto_inicio_path);
         if (e === 'sesion') return { ...res, ...DETENER[e] };
         // cualquier otro fallo de la foto NO detiene: los puntos y el cierre siguen
       }
@@ -287,7 +299,7 @@ async function procesarViajes(db, token, usuario) {
         await db.runAsync("UPDATE viajes_locales SET sync_foto_fin = 'error', ultimo_error = 'Foto de fin no encontrada en el celular' WHERE id = ?", v.id);
         await anotar(db, v.id, 'foto_fin', 'SIN ARCHIVO', 'Foto de fin no encontrada en el celular');
       } else {
-        const e = await etapaViaje(db, v, 'sync_foto_fin', 'foto_fin', () => postFoto(`${base}/foto?tipo=fin`, token, v.foto_fin_path));
+        const e = await etapaFoto(db, v, 'sync_foto_fin', 'foto_fin', `${base}/foto?tipo=fin`, token, v.foto_fin_path);
         if (e === 'sesion') return { ...res, ...DETENER[e] };
       }
       await recargar();

@@ -166,6 +166,11 @@ export async function subirArchivo(url, token, uri, timeoutMs = 30000) {
   }
 }
 
+/** Tamaño del archivo en KB (null si no se puede leer). */
+export function tamanoKB(uri) {
+  try { return Math.round((new File(uri).size || 0) / 1024); } catch { return null; }
+}
+
 export function borrarArchivo(uri) {
   try { if (uri) { const f = new File(uri); if (f.exists) f.delete(); } } catch { /* no bloquea */ }
 }
