@@ -1,6 +1,6 @@
 # Estado: viajes con GPS en la app (opticore-movil + AppTransporte)
 
-Última actualización: 2026-09-25. Commits locales **sin push** en ambos repos.
+Última actualización: 2026-09-25. AppTransporte: commits locales sin push. opticore-movil: ver §6 (remoto).
 Leer este archivo al empezar cualquier sesión sobre viajes/GPS.
 
 ---
@@ -38,7 +38,10 @@ Migraciones **ya ejecutadas** en Supabase: `migraciones_sql/2026_09_viajes_movil
 | `56164ae` | Diagnóstico de fotos con tamaño (KB), tiempo y límite |
 | `6849eff` | Cola de preoperacionales/tanqueos: guarda el mensaje real de las excepciones |
 | `d2c642f` | Fotos reducidas a ≤1600 px de ancho y JPEG 0.7 (`expo-image-manipulator`); límite de subida de fotos 120 s |
-| (este commit) | `app.json`: permiso `RECEIVE_BOOT_COMPLETED`. Sin él la app se cerraba con el primer punto GPS (`IllegalArgumentException: Requested job cannot be persisted…`): expo-task-manager programa un trabajo persistente (`setPersisted(true)`) y su manifiesto no declara el permiso |
+| `023f689` | `app.json`: permiso `RECEIVE_BOOT_COMPLETED`. Sin él la app se cerraba con el primer punto GPS (`IllegalArgumentException: Requested job cannot be persisted…`): expo-task-manager programa un trabajo persistente (`setPersisted(true)`) y su manifiesto no declara el permiso |
+| `f871e06` | Paso 11 · "Detenido / sin movimiento" también con la velocidad del último punto (< 5 km/h → 1 min; si no, 3 min); "Activo · en movimiento", "Consultando…", "Recorrido terminado" |
+| `159af8b` | Versión 1.1.0 para el build `preview` (piloto v2) |
+| (este commit) | `docs/GUIA_CONDUCTOR.md`: guía corta para el conductor del piloto |
 
 Base local del celular: SQLite `user_version` 7 (v5 GPS, v6 precisión, v7 `diag_envio`).
 
@@ -60,15 +63,15 @@ Base local del celular: SQLite `user_version` 7 (v5 GPS, v6 precisión, v7 `diag
 
 ## 3. Pendientes
 
-1. **Development build nuevo**: `expo-image-manipulator` (nativo) y el permiso `RECEIVE_BOOT_COMPLETED` (manifiesto) solo entran con un build nuevo. Con el build anterior la app se cierra al llegar el primer punto GPS.
-2. **Prueba de noche de la foto** con el build nuevo: anotar KB y segundos del diagnóstico. Confirmar la causa original del fallo (sospecha: FormData de React Native y/o foto grande que agotaba 30 s).
-3. **Recuperación del viaje `86102E53` (remisión `SHAHAH`)**: debería completarse solo al abrir la app con la corrección; después anularlo.
-4. **Pruebas en carro de las etapas del GPS**: app abierta, pantalla bloqueada, modo avión, cerrada desde recientes, reinicio del celular, sin "todo el tiempo" y ajustes de batería.
-5. **Build `preview`** para repetir "cerrada desde recientes" (en DEV, si Android despierta la app sin interfaz, necesita el servidor de Metro).
+1. ~~Development build nuevo~~ y ~~pruebas en carro~~: **hechos el 2026-09-25** (app abierta, pantalla bloqueada, modo avión, reinicio, finalizar: todo bien). `86102E53` ya está anulado.
+2. **Prueba de noche de la foto**: anotar KB y segundos del diagnóstico.
+3. **Build `preview` (piloto v2, 1.1.0)** — ver §7. Repetir con él "cerrada desde recientes" y "sin todo el tiempo".
+4. **Notificaciones (Android 13+)**: el manifiesto no declara `POST_NOTIFICATIONS`; el servicio funciona, pero el aviso "Viaje en curso" puede no verse en la barra. Decidir si se pide el permiso.
 6. **Paso 11 · pulido y recuperación**: conciliar viajes con `/movil/viajes/activo` (viaje abierto en el servidor que el celular no tiene), descartar/reintentar viajes con error permanente desde la app, pruebas de volumen de puntos, limpieza de fotos huérfanas.
 7. **Paso 12 · piloto** con 1 volqueta en paralelo a la PWA, 2–3 días: comparar recorridos, batería y viajes perdidos.
 8. **Usuarios inactivos**: `get_current_payload` no rechaza usuarios inactivos ni empresas suspendidas. Propuesta: cache `usr_ok:{user_id}` con `core/cache` (TTL ~60 s), invalidar al cambiar `activo` o suspender la empresa, 401 "Usuario inactivo".
-9. **Anular viajes de prueba** en el Gestor de vales (hay varios `PRUEBA-GPS-0xx` FINALIZADOS de los bancos, más `62F053CD` que quedó EN_PROGRESO).
+9. **Anular viajes de prueba** en el Gestor de vales. Consulta de solo lectura del 2026-09-25 (DataPrueba, sin anular):
+   ids #276–280, #282, #283, #285–289 (`PRUEBA-GPS-010/030/031/032`, FINALIZADOS, marcados REVISAR), `62A17B79` (#291, remisión `8288W8W8WUW`, FINALIZADO, REVISAR), #130 (`PRUEBA 134`, mayo). **Abierto**: #260 (conductor 79278242, RNS080, EN_PROGRESO desde 2026-09-21; confirmar si es prueba). `62F053CD` y `2E148DC3` ya están anulados.
 
 ---
 
@@ -94,3 +97,22 @@ Base local del celular: SQLite `user_version` 7 (v5 GPS, v6 precisión, v7 `diag
 - **En segundo plano los puntos llegan por tandas** (≥60 s y ≥100 m): "Último punto" se atrasa hasta abrir la app.
 - **Permisos nativos que exigen las librerías**: el banco de pruebas en Node simula la parte nativa y NO detecta faltantes del manifiesto (así pasó con `RECEIVE_BOOT_COMPLETED`). Toda funcionalidad nativa nueva se valida en el celular.
 - **"EN LÍNEA" en Home** solo refleja la descarga de maestros; para saber si la cola sube, mirar "por enviar" y el diagnóstico del viaje.
+
+---
+
+## 6. Repositorio
+
+`opticore-movil` no tenía remoto configurado al 2026-09-25 (`git remote -v` vacío). Ver la respuesta de esa sesión.
+
+## 7. Build `preview` (APK piloto v2)
+
+Verificado con `npx expo config --type introspect` (sin `APP_VARIANT`): paquete `com.julianecheverria.opticoremovil`, versión 1.1.0,
+permisos `RECEIVE_BOOT_COMPLETED`, `ACCESS_FINE/COARSE/BACKGROUND_LOCATION`, `FOREGROUND_SERVICE(_LOCATION)`, `CAMERA`; `RECORD_AUDIO` removido.
+`expo-location`, `expo-task-manager`, `expo-image-manipulator` en dependencias. En release `__DEV__` es falso → `API_URL` = `https://opticore-ia.com`.
+
+```
+npx eas-cli build -p android --profile preview
+```
+
+Se instala **encima** del piloto v1 (mismo paquete y firma de EAS): conserva la base local y la migra.
+
