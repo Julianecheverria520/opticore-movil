@@ -31,6 +31,9 @@ export default function LoginScreen({ onLoginSuccess }) {
       if (response.ok && data.access_token) {
         // 🔥 Pasamos el token Y el nombre de usuario para el modo Offline
         onLoginSuccess(data.access_token, username.trim());
+      } else if (response.status === 403 && typeof data.detail === 'string') {
+        // Cuenta inactiva o empresa suspendida: el servidor explica el motivo
+        Alert.alert('Acceso bloqueado', `${data.detail}\n\nLo que tengas sin enviar se conserva en el celular.`);
       } else {
         Alert.alert('Error', 'Credenciales incorrectas o acceso denegado.');
       }
