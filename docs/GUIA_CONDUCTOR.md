@@ -18,11 +18,12 @@ guardado en el celular y se envía solo cuando vuelve el internet.
 
 ## 2. Permisos (una sola vez)
 
-La app te los pide al iniciar el primer viaje. Acepta los dos:
+La app te los pide al iniciar el primer viaje. Acepta los tres:
 
 | Permiso | Qué elegir |
 |---|---|
 | Cámara | **Permitir** (fotos de carga y descarga) |
+| Notificaciones | **Permitir** (aviso "Viaje en curso" arriba en el celular mientras registra el recorrido) |
 | Ubicación | **Mientras se usa la app**; después la app muestra *"Permite la ubicación todo el tiempo"*: toca **Continuar** → **Ubicación** → **Permitir todo el tiempo** y vuelve con Atrás |
 
 **"Permitir todo el tiempo" es obligatorio.** Sin él, el recorrido se corta cuando apagas la pantalla.
@@ -54,6 +55,10 @@ También puedes llegar desde la app: pantalla **Viaje en curso** → **Abrir aju
 4. Toma la **foto de la carga**.
 5. Toca **Iniciar Viaje**. Se abre la pantalla **Viaje en curso**: revisa que el *Estado* del GPS no
    esté en rojo (ver sección 6).
+
+Si al iniciar sale **"Tienes un viaje abierto en el sistema"**: hay un viaje tuyo sin cerrar que no
+está en este celular. Puedes iniciar de todas formas, pero **avisa a tu supervisor** para que lo
+cierre; si no, tus viajes nuevos quedan marcados para revisión.
 
 Durante el viaje **puedes bloquear la pantalla y guardar el celular**. No cierres la app
 deslizándola desde "apps recientes".
@@ -95,6 +100,15 @@ celular que aún no llegan al sistema, **normalmente porque no hay señal**. No 
    Puedes seguir trabajando mientras tanto; todo queda guardado.
 5. Si después de todo eso siguen "por enviar" o ves algo en rojo: toma **captura de pantalla** de
    **Viaje en curso** (incluida la parte *Diagnóstico de envío*) y envíala a tu supervisor.
+
+### Franjas de colores en la pantalla principal
+
+| Franja | Qué hacer |
+|---|---|
+| Amarilla **Viaje en curso** | Tócala para ver el viaje o finalizarlo. |
+| Amarilla **Inicia sesión para enviar** | Tócala e ingresa tu usuario y contraseña. |
+| Naranja **viaje(s) abierto(s) en el sistema** | Tócala para ver cuál es y avisa a tu supervisor. |
+| Roja **Viaje con problema de envío** | Tócala: **Reintentar envío**. Si sigue fallando, toma captura y avisa. Usa **Descartar** solo si tu supervisor te lo indica. |
 
 ---
 

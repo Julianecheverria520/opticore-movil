@@ -1,6 +1,6 @@
 # Estado: viajes con GPS en la app (opticore-movil + AppTransporte)
 
-Última actualización: 2026-09-25. AppTransporte: al día con `origin/main`. opticore-movil: sin remoto, ver §6.
+Última actualización: 2026-09-26. opticore-movil en GitHub (`main`, ver §6). AppTransporte: `3e454c3` local, **sin push ni despliegue**.
 Leer este archivo al empezar cualquier sesión sobre viajes/GPS.
 
 ---
@@ -18,6 +18,7 @@ Leer este archivo al empezar cualquier sesión sobre viajes/GPS.
 | `49a6c0b` | Paso 5 · `POST /movil/viajes/{uuid}/foto` y `/finalizar` (idempotentes) |
 | `42424e7` | Gestor de vales: distintivo REVISAR, filtro "Solo por revisar", "Marcar como revisado" (`revisado_por`, `fecha_revisado`) |
 | `29c91ee` | Escape de HTML común (`static/js/seguridad_html.js`) en todas las pantallas; `sw.js` caché v7 |
+| `3e454c3` | **Sin desplegar.** `get_current_payload` rechaza usuario inactivo / empresa SUSPENDIDO (401; 503 si la base falla). Cache `usr_ok:{id}` / `usr_ok:sub:{user}` 60 s, invalidación al cambiar `activo` y el estado de la empresa. `api/tests/test_usuario_habilitado.py` |
 
 Verificar en producción que `42424e7` y `29c91ee` estén desplegados.
 
@@ -41,9 +42,19 @@ Migraciones **ya ejecutadas** en Supabase: `migraciones_sql/2026_09_viajes_movil
 | `023f689` | `app.json`: permiso `RECEIVE_BOOT_COMPLETED`. Sin él la app se cerraba con el primer punto GPS (`IllegalArgumentException: Requested job cannot be persisted…`): expo-task-manager programa un trabajo persistente (`setPersisted(true)`) y su manifiesto no declara el permiso |
 | `f871e06` | Paso 11 · "Detenido / sin movimiento" también con la velocidad del último punto (< 5 km/h → 1 min; si no, 3 min); "Activo · en movimiento", "Consultando…", "Recorrido terminado" |
 | `159af8b` | Versión 1.1.0 para el build `preview` (piloto v2) |
-| (este commit) | `docs/GUIA_CONDUCTOR.md`: guía corta para el conductor del piloto |
+| `95a1ea3` | `docs/GUIA_CONDUCTOR.md`: guía corta para el conductor del piloto |
+| `0c68f50` | `.gitignore`: `.env`, `.env.*`, keystores, `credentials.json`, `google-services.json` |
+| `dda305f` | Login: con 403 (cuenta inactiva / empresa suspendida) muestra el motivo del servidor |
+| `13e2ef9` | Reintentos **por etapa** (SQLite v8 `intentos_etapa`): las fallas de una foto ya no llevan el cierre a error |
+| `45cbb7c` | Cola: inicio → puntos → foto de carga → foto de descarga → cierre; foto SIN RESPUESTA en pausa 5 min ("Enviar ahora" la fuerza) |
+| `00e8949` | Viaje con problema de envío: **Reintentar / Descartar** en Viaje en curso y franja roja en Home |
+| `1e0de5c` | Finalizar: guarda el cierre y después apaga el GPS |
+| `5af66b5` | `POST_NOTIFICATIONS` (Android 13+): se pide al iniciar el viaje; aviso si falta. **Requiere build nuevo** |
+| `7dcd013` | Conciliación con `/movil/viajes/activo`: franja naranja en Home y confirmación al iniciar si hay viajes abiertos en el servidor que el celular no tiene |
+| (este commit) | Guía del conductor y este archivo al día |
 
-Base local del celular: SQLite `user_version` 7 (v5 GPS, v6 precisión, v7 `diag_envio`).
+Base local del celular: SQLite `user_version` 8 (v5 GPS, v6 precisión, v7 `diag_envio`, v8 `intentos_etapa`).
+`viajes_locales.sync_status`: `pending | synced | error | descartado`; `estado_local`: `EN_CURSO | FINALIZADO | DESCARTADO`.
 
 ---
 
@@ -57,7 +68,7 @@ Base local del celular: SQLite `user_version` 7 (v5 GPS, v6 precisión, v7 `diag
 - **Datos de prueba**: empresa **DataPrueba (id 1)**, conductor **1012392327**, placa **JMU965**, remisiones **`PRUEBA-GPS-…`**. Solo escribir ahí.
 - **Web**: Gestor de vales (`/gestor-vales`) para ver, anular y revisar viajes; monitor y `/trayecto` para el recorrido.
 - **En la app**: "Viaje en curso" → bloque "Diagnóstico de envío (último intento)" muestra código HTTP, mensaje, KB/tiempo de fotos y hora de cada etapa.
-- **Bancos de prueba en Node** (SQLite real con `node:sqlite`, módulos reales de la app, servidor local): vivían en el scratchpad de la sesión (`banco/`), **no están versionados**. Si se necesitan otra vez, pedir recrearlos o moverlos a `scripts/banco/`.
+- **Bancos de prueba en Node** (SQLite real con `node:sqlite`, módulos reales de la app, servidor local): se recrearon el 2026-09-26 en el scratchpad (`banco/`: cargador con módulos nativos simulados, servidor falso; pruebas de las mejoras 1, 2, 4 y 7, 23 comprobaciones). **No están versionados**; si se necesitan otra vez, pedir moverlos a `scripts/banco/`.
 
 ---
 
@@ -65,11 +76,11 @@ Base local del celular: SQLite `user_version` 7 (v5 GPS, v6 precisión, v7 `diag
 
 1. ~~Development build nuevo~~ y ~~pruebas en carro~~: **hechos el 2026-09-25** (app abierta, pantalla bloqueada, modo avión, reinicio, finalizar: todo bien). `86102E53` ya está anulado.
 2. **Prueba de noche de la foto**: anotar KB y segundos del diagnóstico.
-3. **Build `preview` (piloto v2, 1.1.0)** — ver §7. Repetir con él "cerrada desde recientes" y "sin todo el tiempo".
-4. **Notificaciones (Android 13+)**: el manifiesto no declara `POST_NOTIFICATIONS`; el servicio funciona, pero el aviso "Viaje en curso" puede no verse en la barra. Decidir si se pide el permiso.
-6. **Paso 11 · pulido y recuperación**: conciliar viajes con `/movil/viajes/activo` (viaje abierto en el servidor que el celular no tiene), descartar/reintentar viajes con error permanente desde la app, pruebas de volumen de puntos, limpieza de fotos huérfanas.
+3. **Orden acordado (2026-09-26)**: desplegar backend `3e454c3` → development build nuevo (por `POST_NOTIFICATIONS`) → probar en OptiCore DEV → **después** build `preview` (piloto v2, 1.1.0, ver §7) y repetir "cerrada desde recientes" y "sin todo el tiempo".
+4. **Token de 7 días solo para la app (mejora 3b)**: diseño propuesto, **pendiente de aprobación**; va después de desplegar `3e454c3`.
+6. **Después del piloto (mejora 8)**: distancia acumulada en vez de releer todos los puntos cada 10 s, prueba de volumen de puntos, limpieza de fotos huérfanas (con error que nunca se borran).
 7. **Paso 12 · piloto** con 1 volqueta en paralelo a la PWA, 2–3 días: comparar recorridos, batería y viajes perdidos.
-8. **Usuarios inactivos**: `get_current_payload` no rechaza usuarios inactivos ni empresas suspendidas. Propuesta: cache `usr_ok:{user_id}` con `core/cache` (TTL ~60 s), invalidar al cambiar `activo` o suspender la empresa, 401 "Usuario inactivo".
+8. ~~Usuarios inactivos~~: hecho en `3e454c3` (falta desplegar).
 9. **Anular viajes de prueba** en el Gestor de vales. Consulta de solo lectura del 2026-09-25 (DataPrueba, sin anular):
    ids #276–280, #282, #283, #285–289 (`PRUEBA-GPS-010/030/031/032`, FINALIZADOS, marcados REVISAR), `62A17B79` (#291, remisión `8288W8W8WUW`, FINALIZADO, REVISAR), #130 (`PRUEBA 134`, mayo). **Abierto**: #260 (conductor 79278242, RNS080, EN_PROGRESO desde 2026-09-21; confirmar si es prueba). `62F053CD` y `2E148DC3` ya están anulados.
 
@@ -82,7 +93,9 @@ Base local del celular: SQLite `user_version` 7 (v5 GPS, v6 precisión, v7 `diag
 - **Fechas**: `fecha_inicio`/`fecha_fin`/`timestamp` en texto `YYYY-MM-DD HH:MM:SS` hora Bogotá (igual que `operacion.py`); `ts` de cada punto = `location.timestamp`.
 - **GPS**: `Accuracy.High`, 30 m, 15 s, deferred 60 s **y** 100 m (en Android el diferido solo aplica en segundo plano y exige ambas condiciones). Descarta precisión > 50 m y saltos > 150 km/h; guarda y cuenta ubicaciones simuladas.
 - **Servicio en primer plano**: según la documentación de Android, iniciado con la app visible sigue recibiendo ubicación con pantalla apagada **sin** "todo el tiempo"; lo que no se puede es crearlo desde segundo plano (Android 14: `SecurityException`). Por eso se reanuda al abrir / volver al frente.
-- **Cola del viaje**: inicio → foto de carga → puntos → foto de descarga → cierre. Las **fotos no bloquean**; el **cierre espera** a que no queden puntos. Toda falla queda en `diag_envio`.
+- **Cola del viaje**: inicio → puntos → foto de carga → foto de descarga → cierre. Las **fotos no bloquean**; el **cierre espera** a que no queden puntos. Toda falla queda en `diag_envio`. Cada etapa cuenta sus fallas (`intentos_etapa`); 4xx (salvo 408/429) o 5 fallas → error de esa etapa. Una foto SIN RESPUESTA espera 5 min antes de reintentarse.
+- **Viaje con problema**: el conductor decide **Reintentar** (etapas en error y puntos rechazados vuelven a la cola) o **Descartar** (deja de enviar; borra fotos y puntos no enviados del celular; lo que ya está en el servidor lo anula el admin).
+- **401 por usuario inactivo / empresa suspendida** = sesión vencida: la app no borra la cola. 503 = reintentar.
 - **Fotos**: ≤1600 px de ancho, JPEG 0.7, subida nativa multipart, límite 120 s.
 - **Web**: `seguridad_html.js` (`escaparHTML`, `argJS`, `urlSegura`) para todo texto del servidor insertado con `innerHTML`.
 
@@ -93,7 +106,7 @@ Base local del celular: SQLite `user_version` 7 (v5 GPS, v6 precisión, v7 `diag
 - **Fallo intermitente de `ultimo_preop_fecha`**: en una de 5 corridas del banco, el caso "sin señal y `ultimo_preop_fecha` = hoy" exigió el preoperacional sin causa encontrada; no se volvió a reproducir. Si en el celular pide el preoperacional estando hecho, investigar `preoperacionalRequerido` (`src/viajes.js`).
 - **Viajes EN_PROGRESO olvidados causan REVISAR**: si el conductor tiene otro viaje abierto en el servidor (PWA, prueba abandonada), los nuevos salen marcados "otro viaje en curso". Pasó con `DCA21390` y `62F053CD`. Cerrar o anular esos viajes antes de probar.
 - **Remisión real vs. esperada**: en una prueba el viaje se registró con remisión `SHAHAH` en lugar de `PRUEBA-GPS-040`; buscar por conductor/placa, no solo por remisión.
-- **Vehículo detenido**: no genera puntos (filtro de 30 m); la pantalla muestra "Detenido / sin movimiento" tras 3 min.
+- **Vehículo detenido**: no genera puntos (filtro de 30 m); la pantalla muestra "Detenido / sin movimiento" tras 1 min si el último punto venía a < 5 km/h, si no tras 3 min.
 - **En segundo plano los puntos llegan por tandas** (≥60 s y ≥100 m): "Último punto" se atrasa hasta abrir la app.
 - **Permisos nativos que exigen las librerías**: el banco de pruebas en Node simula la parte nativa y NO detecta faltantes del manifiesto (así pasó con `RECEIVE_BOOT_COMPLETED`). Toda funcionalidad nativa nueva se valida en el celular.
 - **"EN LÍNEA" en Home** solo refleja la descarga de maestros; para saber si la cola sube, mirar "por enviar" y el diagnóstico del viaje.
@@ -102,12 +115,12 @@ Base local del celular: SQLite `user_version` 7 (v5 GPS, v6 precisión, v7 `diag
 
 ## 6. Repositorio
 
-`opticore-movil` no tenía remoto configurado al 2026-09-25 (`git remote -v` vacío). Ver la respuesta de esa sesión.
+`origin` = `https://github.com/Julianecheverria520/opticore-movil.git` (privado), rama `main` (antes `master`). Primer push el 2026-09-26.
 
 ## 7. Build `preview` (APK piloto v2)
 
 Verificado con `npx expo config --type introspect` (sin `APP_VARIANT`): paquete `com.julianecheverria.opticoremovil`, versión 1.1.0,
-permisos `RECEIVE_BOOT_COMPLETED`, `ACCESS_FINE/COARSE/BACKGROUND_LOCATION`, `FOREGROUND_SERVICE(_LOCATION)`, `CAMERA`; `RECORD_AUDIO` removido.
+permisos `RECEIVE_BOOT_COMPLETED`, `POST_NOTIFICATIONS`, `ACCESS_FINE/COARSE/BACKGROUND_LOCATION`, `FOREGROUND_SERVICE(_LOCATION)`, `CAMERA`; `RECORD_AUDIO` removido.
 `expo-location`, `expo-task-manager`, `expo-image-manipulator` en dependencias. En release `__DEV__` es falso → `API_URL` = `https://opticore-ia.com`.
 
 ```
