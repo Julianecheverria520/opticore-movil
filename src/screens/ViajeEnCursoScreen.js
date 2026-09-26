@@ -102,7 +102,7 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
             const r = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.5 });
             if (r.canceled || !r.assets?.length) return;
             setFinalizando(true);
-            fotoFin = await guardarFoto(r.assets[0].uri, viaje.uuid, 'fin');
+            fotoFin = await guardarFoto(r.assets[0].uri, viaje.uuid, 'fin', r.assets[0].width);
             await detenerGPS(); // el recorrido termina aquí; los puntos que falten se suben antes del cierre
             const pos = await ubicacionConocida();
             await finalizarViajeLocal(viaje.uuid, { fotoFinPath: fotoFin, lat: pos?.lat, lon: pos?.lon });

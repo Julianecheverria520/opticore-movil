@@ -13,7 +13,7 @@ const RUTA_TANQUEO = '/maestros/combustible/guardar';
 
 const MAX_INTENTOS = 5;
 const TIMEOUT_MS = 12000;
-const TIMEOUT_FOTO_MS = 30000;   // una foto con señal débil tarda más que un JSON
+const TIMEOUT_FOTO_MS = 120000;  // una foto con señal débil tarda más que un JSON (ya reducida a ≤1600 px)
 const RUTA_VIAJES = '/movil/viajes';
 const MAX_LOTES_POR_PASADA = 10;   // hasta 2.000 puntos por pasada; el resto en la siguiente
 let enviando = false;

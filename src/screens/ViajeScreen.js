@@ -175,7 +175,7 @@ export default function ViajeScreen({ route, navigation }) {
       if (status !== 'granted') { Alert.alert('Cámara', 'Se necesita permiso de cámara para la foto de carga.'); return; }
       const r = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.5 });
       if (r.canceled || !r.assets?.length) return;
-      const uri = await guardarFoto(r.assets[0].uri, uuid, 'inicio');
+      const uri = await guardarFoto(r.assets[0].uri, uuid, 'inicio', r.assets[0].width);
       fotoRef.current = uri;
       setFotoInicio(`${uri}?v=${Date.now()}`); // evita que la vista previa muestre la foto anterior
     } catch (e) {

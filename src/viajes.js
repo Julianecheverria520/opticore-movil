@@ -1,6 +1,7 @@
 // src/viajes.js · lógica de viajes sin interfaz (se puede probar fuera del celular)
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { File, Directory, Paths, UploadTask, UploadType } from 'expo-file-system';
+import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 
 import { getDb, nuevoUUID, ahoraISO } from './database/db';
 import { fetchConTimeout } from './red';
@@ -129,11 +130,42 @@ function carpetaFotos() {
   return dir;
 }
 
-/** Copia la foto temporal de la cámara a documentDirectory/viajes/{uuid}_{tipo}.jpg. Devuelve la URI. */
-export async function guardarFoto(uriTemporal, uuid, tipo) {
+export const FOTO_ANCHO_MAX = 1600;   // px
+export const FOTO_COMPRESION = 0.7;
+
+/**
+ * Reduce la foto antes de guardarla: máximo 1600 px de ancho (nunca la agranda) y JPEG
+ * con compresión 0.7. Una foto de cámara de 3-6 MB (más de noche, por el ruido) queda
+ * típicamente en 250-600 KB y sube en segundos aun con señal débil.
+ * anchoOriginal: el que reporta la cámara (si no viene, se mide al procesar).
+ */
+async function reducirFoto(uri, anchoOriginal) {
+  let ctx = ImageManipulator.manipulate(uri);
+  if (anchoOriginal > FOTO_ANCHO_MAX) ctx = ctx.resize({ width: FOTO_ANCHO_MAX });
+  let img = await ctx.renderAsync();
+  if (!(anchoOriginal > 0) && img.width > FOTO_ANCHO_MAX) {
+    img = await ImageManipulator.manipulate(img).resize({ width: FOTO_ANCHO_MAX }).renderAsync();
+  }
+  const r = await img.saveAsync({ compress: FOTO_COMPRESION, format: SaveFormat.JPEG });
+  return r.uri;
+}
+
+/**
+ * Reduce la foto de la cámara y la guarda en documentDirectory/viajes/{uuid}_{tipo}.jpg.
+ * Si la reducción falla por cualquier motivo, se guarda la original (nunca se pierde la foto).
+ * Devuelve la URI guardada.
+ */
+export async function guardarFoto(uriTemporal, uuid, tipo, anchoOriginal) {
   const destino = new File(carpetaFotos(), `${uuid}_${tipo}.jpg`);
   if (destino.exists) destino.delete();
-  await new File(uriTemporal).copy(destino);
+  let origen = uriTemporal;
+  try {
+    origen = await reducirFoto(uriTemporal, Number(anchoOriginal) || 0);
+  } catch (e) {
+    console.warn('No se pudo reducir la foto; se guarda la original:', e?.message || e);
+  }
+  await new File(origen).copy(destino);
+  if (origen !== uriTemporal) { try { new File(origen).delete(); } catch { /* temporal */ } }
   return destino.uri;
 }
 
