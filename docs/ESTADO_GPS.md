@@ -38,6 +38,7 @@ Migraciones **ya ejecutadas** en Supabase: `migraciones_sql/2026_09_viajes_movil
 | `56164ae` | Diagnóstico de fotos con tamaño (KB), tiempo y límite |
 | `6849eff` | Cola de preoperacionales/tanqueos: guarda el mensaje real de las excepciones |
 | `d2c642f` | Fotos reducidas a ≤1600 px de ancho y JPEG 0.7 (`expo-image-manipulator`); límite de subida de fotos 120 s |
+| (este commit) | `app.json`: permiso `RECEIVE_BOOT_COMPLETED`. Sin él la app se cerraba con el primer punto GPS (`IllegalArgumentException: Requested job cannot be persisted…`): expo-task-manager programa un trabajo persistente (`setPersisted(true)`) y su manifiesto no declara el permiso |
 
 Base local del celular: SQLite `user_version` 7 (v5 GPS, v6 precisión, v7 `diag_envio`).
 
@@ -59,7 +60,7 @@ Base local del celular: SQLite `user_version` 7 (v5 GPS, v6 precisión, v7 `diag
 
 ## 3. Pendientes
 
-1. **Development build nuevo**: `expo-image-manipulator` es nativo. Sin el build nuevo, "OptiCore DEV" falla al tomar fotos de viaje.
+1. **Development build nuevo**: `expo-image-manipulator` (nativo) y el permiso `RECEIVE_BOOT_COMPLETED` (manifiesto) solo entran con un build nuevo. Con el build anterior la app se cierra al llegar el primer punto GPS.
 2. **Prueba de noche de la foto** con el build nuevo: anotar KB y segundos del diagnóstico. Confirmar la causa original del fallo (sospecha: FormData de React Native y/o foto grande que agotaba 30 s).
 3. **Recuperación del viaje `86102E53` (remisión `SHAHAH`)**: debería completarse solo al abrir la app con la corrección; después anularlo.
 4. **Pruebas en carro de las etapas del GPS**: app abierta, pantalla bloqueada, modo avión, cerrada desde recientes, reinicio del celular, sin "todo el tiempo" y ajustes de batería.
@@ -91,4 +92,5 @@ Base local del celular: SQLite `user_version` 7 (v5 GPS, v6 precisión, v7 `diag
 - **Remisión real vs. esperada**: en una prueba el viaje se registró con remisión `SHAHAH` en lugar de `PRUEBA-GPS-040`; buscar por conductor/placa, no solo por remisión.
 - **Vehículo detenido**: no genera puntos (filtro de 30 m); la pantalla muestra "Detenido / sin movimiento" tras 3 min.
 - **En segundo plano los puntos llegan por tandas** (≥60 s y ≥100 m): "Último punto" se atrasa hasta abrir la app.
+- **Permisos nativos que exigen las librerías**: el banco de pruebas en Node simula la parte nativa y NO detecta faltantes del manifiesto (así pasó con `RECEIVE_BOOT_COMPLETED`). Toda funcionalidad nativa nueva se valida en el celular.
 - **"EN LÍNEA" en Home** solo refleja la descarga de maestros; para saber si la cola sube, mirar "por enviar" y el diagnóstico del viaje.
