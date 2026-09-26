@@ -13,3 +13,13 @@ Al terminar CADA paso de trabajo (no solo al final de una fase), la respuesta de
 4. **Resultado esperado** de cada paso (lo que debe verse en pantalla, en la web o en el servidor).
 
 Si la prueba depende de un backend todavía no desplegado, indicar que se hace contra el servidor local (`__DEV__` en `src/config.js`).
+
+## Regla: credenciales y base de producción
+
+- **NUNCA** mostrar, imprimir ni filtrar el contenido de `.env` ni de variables con credenciales
+  (`DATABASE_URL`, `SECRET_KEY`, `OPENAI_API_KEY`, `SUPABASE_KEY`, etc.), ni siquiera en parte o
+  con filtros (`grep`, `sed`, `echo`). Si hace falta saber a qué base apunta, preguntarle a Julián.
+- **NUNCA** correr `api/tests/test_api.py` ni la suite completa del backend (`pytest` sin archivo,
+  `pytest api/tests`): usan la base de **PRODUCCIÓN**. Solo correr, uno por uno, los archivos de
+  test que no tocan la base (p. ej. `test_token_movil.py`, `test_usuario_habilitado.py`,
+  `test_fallas_preoperacional.py`), y decir antes cuáles se van a correr.
