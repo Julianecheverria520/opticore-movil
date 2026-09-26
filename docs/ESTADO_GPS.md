@@ -1,13 +1,13 @@
 # Estado: viajes con GPS en la app (opticore-movil + AppTransporte)
 
-Última actualización: 2026-09-26. opticore-movil en GitHub (`main`, ver §6). AppTransporte: `3e454c3` en `origin/main` (desplegándose); `dae79b0`, `ca29564` y `b44a822` locales, **sin push ni despliegue**.
+Última actualización: 2026-09-26. opticore-movil en GitHub (`main`, ver §6). AppTransporte: **`99b4636` en producción** (incluye `3e454c3`, `dae79b0`, `ca29564` y `b44a822`).
 Leer este archivo al empezar cualquier sesión sobre viajes/GPS.
 
 ---
 
 ## 1. Qué está hecho
 
-### Backend (AppTransporte) — desplegado en producción hasta al menos `49a6c0b`
+### Backend (AppTransporte) — desplegado en producción hasta `99b4636`
 | Commit | Qué |
 |---|---|
 | `5cae573` | Paso 1 · `/trayecto` filtra por empresa (super_admin ve todas); `operacion.py` y `tracking.py` usan `get_current_payload` (tokens revocados); `/finalizar-viaje` y `/subir-foto` responden 404 para otra empresa; `recalcular-costos-historicos` exige super_admin |
@@ -19,12 +19,12 @@ Leer este archivo al empezar cualquier sesión sobre viajes/GPS.
 | `42424e7` | Gestor de vales: distintivo REVISAR, filtro "Solo por revisar", "Marcar como revisado" (`revisado_por`, `fecha_revisado`) |
 | `29c91ee` | Escape de HTML común (`static/js/seguridad_html.js`) en todas las pantallas; `sw.js` caché v7 |
 | `3e454c3` | `get_current_payload` rechaza usuario inactivo / empresa SUSPENDIDO (401; 503 si la base falla). Cache `usr_ok:{id}` / `usr_ok:sub:{user}` 60 s, invalidación al cambiar `activo` y el estado de la empresa. `api/tests/test_usuario_habilitado.py` |
-| `dae79b0` | **Sin desplegar.** `POST /auth/token-movil`: token `canal=movil`, 7 días para `conductor` (`MOVIL_TOKEN_EXPIRE_MINUTES`, por defecto 10080), 8 h otros roles. Un token móvil solo entra a `/movil/*`, preoperacional validar/guardar y combustible/guardar (`auth.RUTAS_MOVIL`); en el resto 401, y no abre exportaciones ni vistas web. `/auth/token` sin cambios. `api/tests/test_token_movil.py` |
+| `dae79b0` | `POST /auth/token-movil`: token `canal=movil`, 7 días para `conductor` (`MOVIL_TOKEN_EXPIRE_MINUTES`, por defecto 10080), 8 h otros roles. Un token móvil solo entra a `/movil/*`, preoperacional validar/guardar y combustible/guardar (`auth.RUTAS_MOVIL`); en el resto 401, y no abre exportaciones ni vistas web. `/auth/token` sin cambios. `api/tests/test_token_movil.py` |
+| `ca29564` | Fallas del preoperacional: `fallas.py` (fallas abiertas del último preoperacional, `desde` real recorriendo ≤ 90 días, 3 consultas por empresa; `extraer_observacion` entiende `FALLA [..]`, `Auditoría [..]` y el formato viejo de la app). `/validar` con `dias_abierta` real (+ `pregunta_id`, `desde`, `es_critica`, `ultima_obs`); `/movil/maestros` con `usa_autogestion_fallas` y `fallas_abiertas` por equipo; `/guardar`: pregunta **crítica** en falla = TALLER (lo decide el servidor) y devuelve `estado_equipo`. `api/tests/test_fallas_preoperacional.py` |
+| `b44a822` | PWA preoperacional: "AÚN FALLA" solo va a TALLER si la pregunta es crítica; días reales; `ultima_obs`; escapa `obsAnterior`; `sw.js` caché v8 |
+| `99b4636` | `CLAUDE.md`: no mostrar credenciales ni correr `test_api.py` / la suite completa (usan la base de producción) |
 
-| `ca29564` | **Sin desplegar.** Fallas del preoperacional: `fallas.py` (fallas abiertas del último preoperacional, `desde` real recorriendo ≤ 90 días, 3 consultas por empresa; `extraer_observacion` entiende `FALLA [..]`, `Auditoría [..]` y el formato viejo de la app). `/validar` con `dias_abierta` real (+ `pregunta_id`, `desde`, `es_critica`, `ultima_obs`); `/movil/maestros` con `usa_autogestion_fallas` y `fallas_abiertas` por equipo; `/guardar`: pregunta **crítica** en falla = TALLER (lo decide el servidor) y devuelve `estado_equipo`. `api/tests/test_fallas_preoperacional.py` |
-| `b44a822` | **Sin desplegar.** PWA preoperacional: "AÚN FALLA" solo va a TALLER si la pregunta es crítica; días reales; `ultima_obs`; escapa `obsAnterior`; `sw.js` caché v8 |
-
-Verificar en producción que `42424e7` y `29c91ee` estén desplegados.
+Verificado en producción el 2026-09-26 (peticiones sin credenciales): `sw.js` = `opticore-v8`, `POST /auth/token-movil` existe (422 sin datos), la PWA sirve el `preoperacional_logic.js` nuevo.
 
 Migraciones **ya ejecutadas** en Supabase: `migraciones_sql/2026_09_viajes_movil_paso1.sql` y `2026_09_viajes_revision_resuelta.sql`.
 
@@ -61,7 +61,7 @@ Migraciones **ya ejecutadas** en Supabase: `migraciones_sql/2026_09_viajes_movil
 | `e700487` | Este archivo al día |
 | `e9cf503` | **Mapa en Viaje en curso** (MapLibre 11.4, config plugin, nueva arquitectura): botón Ver/Ocultar mapa (se monta solo abierto), línea desde SQLite (simplificada si > 2000 puntos), refresco ≤ 10 s, origen verde / destino rojo desde `rutas`, posición = último punto o última ubicación del sistema (no enciende GPS propio), fondos OSM/Carto en `src/config.js` (`MAPA_FONDOS`), aviso "Mapa sin fondo (sin señal)". **Requiere build nuevo** |
 | `bef74e1` | Equipo recordado: al abrir entra directo al panel del último equipo (o el del viaje en curso); "Cambiar" y "Salir" lo olvidan |
-| (este commit) | **Viaje en curso a pantalla completa**: mapa de fondo (sigue la posición; "centrar en mí"; fondo claro/oscuro), franja superior (placa, material, ruta, estado GPS, envío) y panel inferior deslizable con "Preoperacional / Novedad" y "Finalizar viaje"; arriba del panel, todo el detalle de antes. Si el mapa no existe o falla: la pantalla anterior sin mapa. El mapa no refresca en segundo plano ni con otra pantalla encima |
+| `e842310` | **Viaje en curso a pantalla completa**: mapa de fondo (sigue la posición; "centrar en mí"; fondo claro/oscuro), franja superior (placa, material, ruta, estado GPS, envío) y panel inferior deslizable con "Preoperacional / Novedad" y "Finalizar viaje"; arriba del panel, todo el detalle de antes. Si el mapa no existe o falla: la pantalla anterior sin mapa. El mapa no refresca en segundo plano ni con otra pantalla encima. **Mapa y pantalla completa probados en campo** |
 | `c6e4486` | **Seguimiento de fallas del preoperacional sin señal** (`src/fallas.js`, SQLite v9 `fallas_abiertas`): tarjeta "FALLA PREVIA (N días)" con "YA SE ARREGLÓ / AÚN FALLA" (observación obligatoria), TALLER solo por pregunta crítica, textos con formato PWA, actualización local al guardar. Con servidor viejo funciona como antes. Solo JS |
 
 Base local del celular: SQLite `user_version` 9 (v5 GPS, v6 precisión, v7 `diag_envio`, v8 `intentos_etapa`, v9 `fallas_abiertas`).
@@ -87,14 +87,15 @@ Base local del celular: SQLite `user_version` 9 (v5 GPS, v6 precisión, v7 `diag
 
 1. ~~Development build nuevo~~ y ~~pruebas en carro~~: **hechos el 2026-09-25** (app abierta, pantalla bloqueada, modo avión, reinicio, finalizar: todo bien). `86102E53` ya está anulado.
 2. **Prueba de noche de la foto**: anotar KB y segundos del diagnóstico.
-3. **Orden acordado (2026-09-26)**: desplegar backend `3e454c3` y `dae79b0` → development build nuevo (`POST_NOTIFICATIONS` + `expo-secure-store` + MapLibre) → probar en OptiCore DEV → **después** build `preview` (piloto v2, 1.1.0, ver §7) y repetir "cerrada desde recientes" y "sin todo el tiempo".
+3. ~~Desplegar backend~~ (`99b4636` en producción) y ~~development build nuevo~~ (mapa y pantalla completa probados en campo). **Sigue: build `preview` 1.1.1** (ver §7), instalar encima del piloto y repetir "cerrada desde recientes" y "sin todo el tiempo".
 4. ~~Token de 7 días (3b)~~ y ~~secure-store~~: hechos (`dae79b0`, `a18c99c`, `fe841e3`). Las sesiones abiertas antes siguen con su token de 8 h hasta que venza; el siguiente login ya usa `/auth/token-movil`.
 6. **Después del piloto (mejora 8)**: distancia acumulada en vez de releer todos los puntos cada 10 s, prueba de volumen de puntos, limpieza de fotos huérfanas (con error que nunca se borran).
 7. **Paso 12 · piloto** con 1 volqueta en paralelo a la PWA, 2–3 días: comparar recorridos, batería y viajes perdidos.
-10. **Fallas del preoperacional**: desplegar `ca29564` + `b44a822` junto con `dae79b0` (sin SQL); luego probar en OptiCore DEV (solo JS) y entra en el build `preview`. Después del piloto: resolver fallas desde taller/oficina con tabla propia.
-8. ~~Usuarios inactivos~~: hecho en `3e454c3` (falta desplegar).
+8. ~~Usuarios inactivos~~: hecho en `3e454c3` (desplegado).
+10. **Fallas del preoperacional: listas** (backend `ca29564` + PWA `b44a822` en producción, sin SQL; app `c6e4486`, entra en el `preview` 1.1.1). DataPrueba tiene `usa_autogestion_fallas = true` pero **ninguna pregunta crítica**: marcar una (p. ej. la 3, freno) para probar TALLER; la pregunta 2 tiene el texto dañado. Después del piloto: resolver fallas desde taller/oficina con tabla propia.
+11. ~~Incidente de credenciales (2026-09-26)~~: la cadena de conexión de Supabase quedó en una conversación; **cerrado, contraseña rotada**. Reglas nuevas en `CLAUDE.md` de ambos repos.
 9. **Anular viajes de prueba** en el Gestor de vales. Consulta de solo lectura del 2026-09-25 (DataPrueba, sin anular):
-   ids #276–280, #282, #283, #285–289 (`PRUEBA-GPS-010/030/031/032`, FINALIZADOS, marcados REVISAR), `62A17B79` (#291, remisión `8288W8W8WUW`, FINALIZADO, REVISAR), #130 (`PRUEBA 134`, mayo). **Abierto**: #260 (conductor 79278242, RNS080, EN_PROGRESO desde 2026-09-21; confirmar si es prueba). `62F053CD` y `2E148DC3` ya están anulados.
+   ids #276–280, #282, #283, #285–289 (`PRUEBA-GPS-010/030/031/032`, FINALIZADOS, marcados REVISAR), `62A17B79` (#291, remisión `8288W8W8WUW`, FINALIZADO, REVISAR), #130 (`PRUEBA 134`, mayo). #260 (conductor 79278242, RNS080, EN_PROGRESO desde 2026-09-21) **era de prueba**: anularlo con los demás. `62F053CD` y `2E148DC3` ya están anulados.
 
 ---
 
@@ -133,7 +134,7 @@ Base local del celular: SQLite `user_version` 9 (v5 GPS, v6 precisión, v7 `diag
 
 ## 7. Build `preview` (APK piloto v2)
 
-Verificado con `npx expo config --type introspect` (sin `APP_VARIANT`): paquete `com.julianecheverria.opticoremovil`, versión 1.1.0,
+Verificado con `npx expo config --type introspect` (sin `APP_VARIANT`): paquete `com.julianecheverria.opticoremovil`, versión **1.1.1** (versionCode lo lleva EAS: `appVersionSource: remote` + `autoIncrement`; el `preview` 1.1.0 code 2 de `e842310` no tiene las fallas previas, el siguiente sale con code 3),
 permisos `RECEIVE_BOOT_COMPLETED`, `POST_NOTIFICATIONS`, `ACCESS_FINE/COARSE/BACKGROUND_LOCATION`, `FOREGROUND_SERVICE(_LOCATION)`, `CAMERA`; `RECORD_AUDIO` removido.
 `expo-location`, `expo-task-manager`, `expo-image-manipulator` en dependencias. En release `__DEV__` es falso → `API_URL` = `https://opticore-ia.com`.
 
