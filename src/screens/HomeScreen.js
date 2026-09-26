@@ -11,7 +11,7 @@ import { getDb, esMaquinaria } from '../database/db';
 import { sincronizarDatosMaestros, ultimoMotivoSync } from '../database/sync';
 import { enviarPendientes, contarPendientes, iniciarAutoSync } from '../database/syncUp';
 import { API_URL } from '../config';
-import { viajeEnCurso, viajesConProblema } from '../viajes';
+import { viajeEnCurso, viajesConProblema, viajesAbiertosAjenos, describirAjenos } from '../viajes';
 import { asegurarGPS } from '../gps/control';
 
 // R7 · Estado de conexión con tres causas distintas, para que el operador sepa qué hacer
@@ -43,6 +43,8 @@ export default function HomeScreen({ navigation }) {
   const [viajeActivo, setViajeActivo] = useState(null);
   // Viaje con problema de envío (error permanente): la franja lleva a reintentar o descartar
   const [viajeProblema, setViajeProblema] = useState(null);
+  // Viajes abiertos en el servidor que este celular no tiene (se consulta con cada sincronización)
+  const [ajenos, setAjenos] = useState([]);
   const refrescarViaje = useCallback(async () => {
     try { setViajeActivo(await viajeEnCurso()); } catch {}
     try { setViajeProblema((await viajesConProblema())[0] || null); } catch {}
@@ -67,6 +69,8 @@ export default function HomeScreen({ navigation }) {
 
       if (exito || ultimoMotivoSync === 'vacio') {
         setEstadoRed('ok');
+        const l = await viajesAbiertosAjenos({ token, apiUrl: API_URL });
+        if (l) setAjenos(l); // null = no se pudo consultar: se deja lo último conocido
         const nuevaFecha = await AsyncStorage.getItem('lastSyncDate');
         if (nuevaFecha) setLastSync(nuevaFecha);
       } else if (ultimoMotivoSync === 'sesion') {
@@ -240,6 +244,17 @@ export default function HomeScreen({ navigation }) {
     </TouchableOpacity>
   ) : null;
 
+  const avisoAjenos = ajenos.length ? (
+    <TouchableOpacity style={styles.bannerAjenos} onPress={() => Alert.alert('Viajes abiertos en el sistema', describirAjenos(ajenos))}>
+      <FontAwesome5 name="exclamation-circle" size={16} color="#0f172a" />
+      <View style={{ flex: 1, marginLeft: 10 }}>
+        <Text style={styles.bannerTitulo}>{ajenos.length === 1 ? '1 viaje abierto' : `${ajenos.length} viajes abiertos`} en el sistema</Text>
+        <Text style={styles.bannerTexto}>No están en este celular • toca para ver qué hacer</Text>
+      </View>
+      <FontAwesome5 name="chevron-right" size={12} color="#0f172a" />
+    </TouchableOpacity>
+  ) : null;
+
   const abrirViaje = () => {
     if (viajeActivo) navigation.navigate('ViajeEnCurso', { uuid: viajeActivo.uuid });
     else navigation.navigate('Viaje', { placa: equipoActual.placa });
@@ -274,6 +289,7 @@ export default function HomeScreen({ navigation }) {
           {avisoSesion}
           {avisoViaje}
           {avisoProblema}
+          {avisoAjenos}
           <TouchableOpacity style={styles.btnQrGiant} onPress={() => { setScanned(false); setShowCamera(true); }}>
             <FontAwesome5 name="qrcode" size={40} color="#fff" style={{ marginBottom: 15 }} />
             <Text style={styles.btnQrTextGiant}>Escanear Código QR</Text>
@@ -332,6 +348,7 @@ export default function HomeScreen({ navigation }) {
         {avisoSesion}
         {avisoViaje}
         {avisoProblema}
+        {avisoAjenos}
 
         <View style={styles.equipoCard}>
           <View style={styles.equipoIconWrap}><FontAwesome5 name={equipoActual.usaHoras ? 'tractor' : 'truck'} size={28} color="#fff" /></View>
@@ -403,6 +420,7 @@ const styles = StyleSheet.create({
   bannerTitulo: { color: '#0f172a', fontWeight: '900', fontSize: 14 },
   bannerViaje: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fcd34d', borderRadius: 12, padding: 14, marginBottom: 15 },
   bannerProblema: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#dc2626', borderRadius: 12, padding: 14, marginBottom: 15 },
+  bannerAjenos: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fdba74', borderRadius: 12, padding: 14, marginBottom: 15 },
   bannerTexto: { color: '#1e293b', fontSize: 12, marginTop: 2 },
   btnCerrarModal: { position: 'absolute', top: 50, right: 20, backgroundColor: '#1e293b', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8 },
   btnCerrarModalText: { color: '#fff', fontWeight: 'bold' },

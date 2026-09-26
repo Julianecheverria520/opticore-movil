@@ -316,3 +316,35 @@ export async function descartarViaje(uuid) {
   borrarArchivo(v.foto_fin_path);
   return obtenerViaje(uuid);
 }
+
+// ── CONCILIACIÓN CON EL SERVIDOR ──────────────────────────────────────────────
+
+/**
+ * Viajes EN_PROGRESO del conductor en el servidor que este celular NO está manejando:
+ * iniciados en la PWA, pruebas abandonadas o viajes descartados aquí. Mientras sigan
+ * abiertos, el servidor marca los viajes nuevos "otro viaje en curso" (REVISAR).
+ * Devuelve la lista (vacía si no hay) o null si no se pudo consultar (sin señal).
+ */
+export async function viajesAbiertosAjenos({ token, apiUrl, timeoutMs = 6000 } = {}) {
+  if (!token || !apiUrl) return null;
+  try {
+    const res = await fetchConTimeout(`${apiUrl}/movil/viajes/activo`, { headers: { Authorization: `Bearer ${token}` } }, timeoutMs);
+    if (!res.ok) return null;
+    const d = await res.json();
+    const db = await getDb();
+    const propios = new Set(
+      (await db.getAllAsync("SELECT uuid FROM viajes_locales WHERE sync_status <> 'descartado'")).map((r) => r.uuid)
+    );
+    return (d.viajes || []).filter((v) => !v.uuid_cliente || !propios.has(v.uuid_cliente));
+  } catch {
+    return null;
+  }
+}
+
+/** Texto para el conductor con la lista de viajes abiertos en el sistema. */
+export function describirAjenos(lista) {
+  const filas = lista.map((v) => `• #${v.id_viaje} · ${v.placa} · remisión ${v.remision || '—'} · desde ${String(v.fecha_inicio || '').slice(0, 16)}`);
+  return `${filas.join('\n')}\n\nNo están en este celular (se iniciaron en otro lado o se descartaron). ` +
+    'Pide al administrador que los cierre o anule en el Gestor de vales: mientras sigan abiertos, ' +
+    'tus viajes nuevos quedan marcados para revisión.';
+}

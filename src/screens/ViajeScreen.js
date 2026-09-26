@@ -13,6 +13,7 @@ import { iniciarGPS, pedirPermisoNotificaciones } from '../gps/control';
 import {
   preoperacionalRequerido, ordenarOrigenes, validarCantidad, capacidadEquipo,
   guardarFoto, borrarArchivo, crearViajeLocal, viajeEnCurso, uuidViaje, RADIO_CERCANOS_KM,
+  viajesAbiertosAjenos, describirAjenos,
 } from '../viajes';
 
 /** Lista desplegable simple (modal) para material, origen y destino. */
@@ -93,6 +94,7 @@ export default function ViajeScreen({ route, navigation }) {
   const uuid = useRef(uuidViaje()).current;
   const iniciado = useRef(false);
   const fotoRef = useRef(null);
+  const ajenosRef = useRef([]); // viajes abiertos en el servidor que este celular no tiene
 
   useEffect(() => {
     let activo = true;
@@ -108,6 +110,8 @@ export default function ViajeScreen({ route, navigation }) {
       const token = await AsyncStorage.getItem('userToken');
       const preop = await preoperacionalRequerido(placa, { token, apiUrl: API_URL });
       if (!activo) return;
+      // En paralelo, sin esperar: ¿hay viajes abiertos en el servidor que este celular no tiene?
+      viajesAbiertosAjenos({ token, apiUrl: API_URL }).then((l) => { ajenosRef.current = l || []; });
       if (preop.requerido) {
         Alert.alert(
           'Preoperacional pendiente',
@@ -203,6 +207,15 @@ export default function ViajeScreen({ route, navigation }) {
       if (!ok) return;
     }
     if (!fotoRef.current) return Alert.alert('Falta la foto', 'Toma la foto de la carga antes de iniciar.');
+    if (ajenosRef.current.length) {
+      const seguir = await new Promise((resolve) => {
+        Alert.alert('Tienes un viaje abierto en el sistema', describirAjenos(ajenosRef.current), [
+          { text: 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Iniciar de todas formas', onPress: () => resolve(true) },
+        ], { cancelable: false });
+      });
+      if (!seguir) return;
+    }
 
     setGuardando(true);
     try {
