@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getDb } from './db';
 import { fetchConTimeout, esErrorDeRed } from '../red';
+import { guardarFallasDescargadas } from '../fallas';
 
 // 'ok' | 'vacio' | 'sesion' | 'sin_red' | 'error'
 export let ultimoMotivoSync = null;
@@ -13,6 +14,9 @@ let enCurso = null;
  * equipo, fecha del último preoperacional y si la empresa usa preoperacional.
  * (Antes pedía /maestros/equipos/ y /maestros/categorias/, que no existen en el
  * servidor: la bajada fallaba siempre con 404.)
+ *
+ * v9 · fallas abiertas del preoperacional por equipo (src/fallas.js). Un servidor
+ * viejo no las manda: la tabla local no se toca y la app funciona como antes.
  *
  * E6 · Si ya hay una bajada en curso, devuelve esa misma promesa en lugar de lanzar
  * otra transacción DELETE/INSERT en paralelo.
@@ -57,6 +61,11 @@ async function bajar(token, API_URL) {
       SELECT placa FROM tanqueos_pendientes WHERE sync_status != 'synced'
     `);
     const conPendientes = new Set(pend.map((p) => (p.placa || '').trim().toUpperCase()));
+    // Placas con preoperacionales sin enviar: sus fallas locales van por delante del servidor
+    const preopPend = await db.getAllAsync(
+      "SELECT DISTINCT equipo_id AS placa FROM reportes_pendientes WHERE sync_status != 'synced'"
+    );
+    const conPreopPendiente = new Set(preopPend.map((p) => (p.placa || '').trim().toUpperCase()));
     const locales = {};
     (await db.getAllAsync('SELECT placa, ultimo_odometro, ultimo_horometro, estado FROM equipos'))
       .forEach((e) => { locales[e.placa] = e; });
@@ -114,6 +123,9 @@ async function bajar(token, API_URL) {
         } finally { await st.finalizeAsync(); }
       }
 
+      // v9 · fallas abiertas (solo si el servidor las manda)
+      if (eqArray.length) await guardarFallasDescargadas(tx, eqArray, conPreopPendiente);
+
       // v2 · materiales y rutas: misma regla R2 (lista vacía = no se toca lo local)
       if (matArray.length) {
         await tx.runAsync('DELETE FROM materiales');
@@ -142,6 +154,10 @@ async function bajar(token, API_URL) {
     // v2 · la empresa exige (o no) preoperacional antes de iniciar un viaje
     if (typeof data?.usa_preoperacional === 'boolean') {
       await AsyncStorage.setItem('usaPreoperacional', data.usa_preoperacional ? '1' : '0');
+    }
+    // v9 · autogestión de fallas de la empresa (un servidor viejo no la manda: queda como estaba)
+    if (typeof data?.usa_autogestion_fallas === 'boolean') {
+      await AsyncStorage.setItem('usaAutogestionFallas', data.usa_autogestion_fallas ? '1' : '0');
     }
 
     const a = new Date();

@@ -153,6 +153,17 @@ const MIGRACIONES = [
     const cv = (await db.getAllAsync('PRAGMA table_info(viajes_locales)')).map((c) => c.name);
     if (!cv.includes('intentos_etapa')) await db.execAsync('ALTER TABLE viajes_locales ADD COLUMN intentos_etapa TEXT');
   },
+  // v9 · fallas abiertas del preoperacional por placa (autogestión de fallas, src/fallas.js).
+  //       desde = 'YYYY-MM-DD' en que empezó la falla; el contador de días se calcula al mostrar.
+  async (db) => {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS fallas_abiertas (
+        placa TEXT NOT NULL, pregunta_id INTEGER NOT NULL, pregunta TEXT, categoria TEXT,
+        es_critica INTEGER DEFAULT 0, desde TEXT, historial_limitado INTEGER DEFAULT 0, ultima_obs TEXT,
+        PRIMARY KEY (placa, pregunta_id)
+      );
+    `);
+  },
 ];
 
 async function migrar(db) {

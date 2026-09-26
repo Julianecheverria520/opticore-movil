@@ -10,6 +10,10 @@ import { API_URL } from '../config';
 import { getDb, nuevoUUID, ahoraISO, parseNum, esMaquinaria } from '../database/db';
 import { enviarPendientes } from '../database/syncUp';
 import { fetchConTimeout } from '../red';
+import {
+  RESUELTA, CONTINUA, textoDias, armarObservaciones,
+  leerFallasAbiertas, reemplazarFallasPlaca, actualizarFallasLocales,
+} from '../fallas';
 
 export default function PreoperacionalScreen({ route, navigation }) {
   const { placa } = route.params;
@@ -28,6 +32,23 @@ export default function PreoperacionalScreen({ route, navigation }) {
   const [obsFallas, setObsFallas] = useState({});
   const [observacionFinal, setObservacionFinal] = useState('');
   const [guardando, setGuardando] = useState(false);
+
+  // Autogestión de fallas (src/fallas.js): fallas abiertas de esta placa por pregunta_id,
+  // y lo que responde el conductor para cada una (RESUELTA / CONTINUA + observación).
+  const [autogestion, setAutogestion] = useState(false);
+  const [fallasPrevias, setFallasPrevias] = useState({});
+  const [seguimiento, setSeguimiento] = useState({});
+  const [obsSeguimiento, setObsSeguimiento] = useState({});
+
+  // Como en la PWA, la observación de "AÚN FALLA" arranca con la del reporte anterior
+  const mostrarFallas = (fallas) => {
+    setFallasPrevias(fallas);
+    setObsSeguimiento((prev) => {
+      const n = { ...prev };
+      for (const f of Object.values(fallas)) if (n[f.pregunta_id] == null) n[f.pregunta_id] = f.ultima_obs || '';
+      return n;
+    });
+  };
 
   useEffect(() => {
     async function cargarDatos() {
@@ -72,6 +93,11 @@ export default function PreoperacionalScreen({ route, navigation }) {
         setPreguntasAgrupadas(grupos);
         setCategorias(Object.keys(grupos));
         setRespuestas(respuestasIniciales);
+
+        // Solo con un servidor que ya manda fallas en /movil/maestros (si no, la clave no existe)
+        const usaAuto = (await AsyncStorage.getItem('usaAutogestionFallas')) === '1';
+        setAutogestion(usaAuto);
+        if (usaAuto) mostrarFallas(await leerFallasAbiertas(db, placaLimpia));
       } catch (e) {
         console.error("Error offline:", e);
       }
@@ -93,6 +119,26 @@ export default function PreoperacionalScreen({ route, navigation }) {
              const valRemoto = parseNum(usaHoro ? dataVal.ultimo_horometro : dataVal.ultimo_odometro);
              return String(Math.max(valLocal, valRemoto));
           });
+
+          // Con señal, /validar trae las fallas al minuto (p. ej. un preoperacional recién hecho en la
+          // PWA). Se usan solo si el servidor es nuevo (pregunta_id en cada alerta y maestros con la
+          // clave) y si esta placa no tiene preoperacionales sin enviar (esos van por delante).
+          const alertas = dataVal.alertas_pendientes;
+          const servidorNuevo = typeof dataVal.usa_autogestion_fallas === 'boolean'
+            && Array.isArray(alertas) && alertas.every((a) => a.pregunta_id != null)
+            && (await AsyncStorage.getItem('usaAutogestionFallas')) !== null;
+          if (servidorNuevo) {
+            const db = await getDb();
+            const pend = await db.getFirstAsync(
+              "SELECT COUNT(*) AS n FROM reportes_pendientes WHERE equipo_id = ? AND sync_status != 'synced'", placaLimpia
+            );
+            if (!pend?.n) {
+              await AsyncStorage.setItem('usaAutogestionFallas', dataVal.usa_autogestion_fallas ? '1' : '0');
+              await reemplazarFallasPlaca(db, placaLimpia, dataVal.usa_autogestion_fallas ? alertas : []);
+              setAutogestion(dataVal.usa_autogestion_fallas);
+              mostrarFallas(dataVal.usa_autogestion_fallas ? await leerFallasAbiertas(db, placaLimpia) : {});
+            }
+          }
         }
       } catch (error) {
         console.log("Sin red. Usando histórico local.");
@@ -155,26 +201,46 @@ export default function PreoperacionalScreen({ route, navigation }) {
 
     let faltanObservaciones = false;
     let fallaCritica = false;
-    const lineasFallas = [];
+    const sinResponder = [];
+    const nuevas = [];
+    const seg = [];
+    const respuestasEnvio = { ...respuestas };
 
     for (const cat of categorias) {
       for (const p of (preguntasAgrupadas[cat] || [])) {
-        if (!respuestas[p.id]) {
+        const falla = autogestion ? fallasPrevias[p.id] : null;
+        if (falla) {
+          // Falla anterior: "YA SE ARREGLÓ" = bien; "AÚN FALLA" = sigue abierta (obs. obligatoria).
+          // Solo una pregunta CRÍTICA manda a TALLER (misma regla que la PWA y el servidor).
+          const sel = seguimiento[p.id];
+          const obs = (obsSeguimiento[p.id] || '').trim();
+          if (!sel || (sel === CONTINUA && !obs)) { sinResponder.push(p.pregunta); continue; }
+          respuestasEnvio[p.id] = sel === RESUELTA;
+          if (sel === CONTINUA && p.es_critica === 1) fallaCritica = true;
+          seg.push({ pregunta_id: p.id, pregunta: p.pregunta, resultado: sel, obs: sel === CONTINUA ? obs : '' });
+        } else if (!respuestas[p.id]) {
           if (p.es_critica === 1) fallaCritica = true;
           const txt = (obsFallas[p.id] || '').trim();
           if (!txt) faltanObservaciones = true;
-          lineasFallas.push(`- [${cat}] ${p.pregunta}: ${txt}`);
+          nuevas.push({ pregunta_id: p.id, pregunta: p.pregunta, categoria: cat, es_critica: p.es_critica === 1, obs: txt });
         }
       }
     }
 
+    if (sinResponder.length) {
+      Alert.alert(
+        'Fallas anteriores sin responder',
+        `❌ Marque "YA SE ARREGLÓ" o "AÚN FALLA" (con observación) en:\n\n• ${sinResponder.join('\n• ')}`
+      );
+      return;
+    }
     if (faltanObservaciones) {
       Alert.alert('Inspección Incompleta', '❌ Por favor, describa el motivo de la falla en los campos resaltados en rojo.');
       return;
     }
 
-    let observaciones = lineasFallas.length ? `FALLAS REPORTADAS:\n${lineasFallas.join('\n')}` : '';
-    if (observacionFinal.trim()) observaciones += `${observaciones ? '\n\n' : ''}OBSERVACIÓN: ${observacionFinal.trim()}`;
+    // Mismo formato que la PWA (FALLA [..] / Auditoría [..]) para que la web lea las observaciones
+    const observaciones = armarObservaciones({ general: observacionFinal, nuevas, seguimiento: seg });
 
     setGuardando(true);
     try {
@@ -197,7 +263,7 @@ export default function PreoperacionalScreen({ route, navigation }) {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'), ?, ?, ?, ?, ?, 'pending')`,
         nuevoUUID(), usuario, placaLimpia, 0, valOdo, valHoro,
         usaHoras ? 0 : anterior, usaHoras ? anterior : 0,
-        estadoFinal, ahoraISO(), JSON.stringify(respuestas), observaciones,
+        estadoFinal, ahoraISO(), JSON.stringify(respuestasEnvio), observaciones,
         gps?.lat ?? null, gps?.lon ?? null
       );
 
@@ -208,7 +274,10 @@ export default function PreoperacionalScreen({ route, navigation }) {
         await db.runAsync('UPDATE equipos SET ultimo_odometro = ?, estado = ? WHERE placa = ?', valOdo, estadoFinal, placaLimpia);
       }
 
-      // 3. Disparar subida en segundo plano (si no hay red simplemente se omite)
+      // 3. Fallas locales al día: un segundo preoperacional sin señal ya ve estas respuestas
+      if (autogestion) await actualizarFallasLocales(db, placaLimpia, { seguimiento: seg, nuevas });
+
+      // 4. Disparar subida en segundo plano (si no hay red simplemente se omite)
       enviarPendientes().catch(() => {});
 
       Alert.alert(
@@ -292,6 +361,53 @@ export default function PreoperacionalScreen({ route, navigation }) {
             <View style={styles.cardHeader}><FontAwesome5 name="list-ul" size={18} color="#475569" style={{marginRight: 10}}/><Text style={styles.cardTitle}>{categorias[pasoActual - 2]}</Text></View>
 
             {(preguntasAgrupadas[categorias[pasoActual - 2]] || []).map(p => {
+              const falla = autogestion ? fallasPrevias[p.id] : null;
+              if (falla) {
+                const sel = seguimiento[p.id];
+                return (
+                  <View key={p.id} style={[styles.fallaPrevia, sel === RESUELTA ? styles.fallaResuelta : null, sel === CONTINUA ? styles.fallaContinua : null]}>
+                    <View style={styles.preguntaRow}>
+                      <View style={{ flex: 1, paddingRight: 10 }}>
+                        <Text style={[styles.preguntaTexto, { color: '#b45309', fontWeight: '800' }]}>{p.pregunta}</Text>
+                        {p.es_critica === 1 ? <Text style={styles.criticoText}>CRÍTICO</Text> : null}
+                      </View>
+                      <View style={styles.badgeFalla}>
+                        <Text style={styles.badgeFallaTxt}>⚠️ FALLA PREVIA</Text>
+                        <Text style={styles.badgeFallaTxt}>({textoDias(falla)})</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.obsAnterior}>
+                      <Text style={{ fontWeight: '800' }}>Reporte anterior: </Text>{falla.ultima_obs || 'Sin descripción'}
+                    </Text>
+                    <View style={styles.filaSeguimiento}>
+                      <TouchableOpacity
+                        style={[styles.btnSeg, { backgroundColor: '#10b981' }, sel === RESUELTA ? styles.btnSegActivo : styles.btnSegInactivo]}
+                        onPress={() => setSeguimiento(prev => ({ ...prev, [p.id]: RESUELTA }))}
+                      >
+                        <FontAwesome5 name="check-circle" size={13} color="#fff" />
+                        <Text style={styles.btnSegTxt}> YA SE ARREGLÓ</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.btnSeg, { backgroundColor: '#ef4444' }, sel === CONTINUA ? styles.btnSegActivo : styles.btnSegInactivo]}
+                        onPress={() => setSeguimiento(prev => ({ ...prev, [p.id]: CONTINUA }))}
+                      >
+                        <FontAwesome5 name="times-circle" size={13} color="#fff" />
+                        <Text style={styles.btnSegTxt}> AÚN FALLA</Text>
+                      </TouchableOpacity>
+                    </View>
+                    {sel === CONTINUA ? (
+                      <TextInput
+                        style={[styles.inputFalla, { minHeight: 60, textAlignVertical: 'top' }]}
+                        placeholder="⚠️ Obligatorio: ¿cómo sigue la falla?"
+                        placeholderTextColor="#fca5a5"
+                        multiline
+                        value={obsSeguimiento[p.id] ?? ''}
+                        onChangeText={(txt) => setObsSeguimiento(prev => ({ ...prev, [p.id]: txt }))}
+                      />
+                    ) : null}
+                  </View>
+                );
+              }
               const estaOk = respuestas[p.id];
               return (
                 <View key={p.id} style={styles.preguntaItem}>
@@ -376,6 +492,17 @@ const styles = StyleSheet.create({
   preguntaTexto: { fontSize: 15, color: '#334155', fontWeight: '600' },
   criticoText: { color: '#ef4444', fontSize: 10, fontWeight: '900', marginTop: 4, letterSpacing: 1 },
   inputFalla: { marginTop: 12, backgroundColor: '#fef2f2', borderWidth: 2, borderColor: '#ef4444', borderRadius: 8, padding: 12, color: '#7f1d1d', fontSize: 14 },
+  fallaPrevia: { marginBottom: 20, padding: 12, borderRadius: 10, borderWidth: 2, borderColor: '#f59e0b', backgroundColor: '#fffbeb' },
+  fallaResuelta: { borderColor: '#10b981', backgroundColor: '#f0fdf4' },
+  fallaContinua: { borderColor: '#ef4444', backgroundColor: '#fef2f2' },
+  badgeFalla: { backgroundColor: '#d97706', borderRadius: 4, paddingVertical: 4, paddingHorizontal: 8, alignItems: 'center' },
+  badgeFallaTxt: { color: '#ffffff', fontSize: 10, fontWeight: '900' },
+  obsAnterior: { fontSize: 13, color: '#92400e', marginTop: 8, marginBottom: 10 },
+  filaSeguimiento: { flexDirection: 'row', gap: 10 },
+  btnSeg: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 12, borderRadius: 8 },
+  btnSegActivo: { opacity: 1, borderWidth: 2, borderColor: '#0f172a' },
+  btnSegInactivo: { opacity: 0.45 },
+  btnSegTxt: { color: '#ffffff', fontWeight: '900', fontSize: 13 },
   footer: { flexDirection: 'row', padding: 15, backgroundColor: '#ffffff', borderTopWidth: 1, borderTopColor: '#e2e8f0', justifyContent: 'space-between' },
   btn: { flex: 1, padding: 16, borderRadius: 8, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', marginHorizontal: 5 },
   btnSecondary: { backgroundColor: '#f1f5f9' },
