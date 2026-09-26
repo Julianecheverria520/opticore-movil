@@ -11,6 +11,7 @@ import { getDb, esMaquinaria } from '../database/db';
 import { sincronizarDatosMaestros, ultimoMotivoSync } from '../database/sync';
 import { enviarPendientes, contarPendientes, iniciarAutoSync } from '../database/syncUp';
 import { API_URL } from '../config';
+import { fetchConTimeout } from '../red';
 import { viajeEnCurso, viajesConProblema, viajesAbiertosAjenos, describirAjenos } from '../viajes';
 import { asegurarGPS } from '../gps/control';
 
@@ -158,7 +159,17 @@ export default function HomeScreen({ navigation }) {
       n > 0 ? `Tienes ${n} registro(s) sin enviar. Se conservarán en el celular. ¿Salir?` : '¿Deseas salir?',
       [
         { text: 'Cancelar', style: 'cancel' },
-        { text: 'Salir', style: 'destructive', onPress: async () => { await AsyncStorage.removeItem('userToken'); Updates.reloadAsync(); } }
+        {
+          text: 'Salir', style: 'destructive', onPress: async () => {
+            // El token de la app dura días: se revoca en el servidor si hay señal (sin esperar más de 5 s)
+            const token = await AsyncStorage.getItem('userToken');
+            if (token) {
+              await fetchConTimeout(`${API_URL}/auth/logout`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }, 5000).catch(() => {});
+            }
+            await AsyncStorage.removeItem('userToken');
+            Updates.reloadAsync();
+          },
+        },
       ]
     );
   };

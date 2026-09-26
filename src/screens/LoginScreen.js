@@ -20,11 +20,15 @@ export default function LoginScreen({ onLoginSuccess }) {
       formData.append('username', username.trim());
       formData.append('password', password);
 
-      const response = await fetch(`${API_URL}/auth/token`, {
+      // Login de la app: token de 7 días (conductores) que solo sirve en las rutas de la app.
+      // Si el servidor todavía no tiene /auth/token-movil (404), se usa el login de la web.
+      const pedir = (ruta) => fetch(`${API_URL}${ruta}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: formData.toString()
       });
+      let response = await pedir('/auth/token-movil');
+      if (response.status === 404) response = await pedir('/auth/token');
 
       const data = await response.json();
 
