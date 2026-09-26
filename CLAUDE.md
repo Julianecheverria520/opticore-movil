@@ -1,5 +1,7 @@
 @AGENTS.md
 
+Al empezar, lee docs/ESTADO_GPS.md.
+
 ## Regla: pruebas manuales al final de cada paso
 
 Al terminar CADA paso de trabajo (no solo al final de una fase), la respuesta debe cerrar con una sección
