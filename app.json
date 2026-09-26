@@ -2,7 +2,7 @@
   "expo": {
     "name": "opticore-movil",
     "slug": "opticore-movil",
-    "version": "1.1.1",
+    "version": "1.1.2",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -38,6 +38,7 @@
       "expo-secure-store",
       "@maplibre/maplibre-react-native",
       "expo-status-bar",
+      "./plugins/icono-notificacion",
       [
         "expo-camera",
         {
