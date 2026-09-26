@@ -102,6 +102,25 @@ async function anotar(db, id, etapa, codigo, mensaje) {
   } catch { /* el diagnóstico es informativo */ }
 }
 
+/** Suma un intento fallido a ESA etapa (intentos_etapa) y devuelve cuántos lleva. */
+async function sumarIntento(db, id, etapa) {
+  const fila = await db.getFirstAsync('SELECT intentos_etapa FROM viajes_locales WHERE id = ?', id);
+  let c = {};
+  try { c = JSON.parse(fila?.intentos_etapa || '{}') || {}; } catch { c = {}; }
+  c[etapa] = (Number(c[etapa]) || 0) + 1;
+  await db.runAsync('UPDATE viajes_locales SET intentos_etapa = ? WHERE id = ?', JSON.stringify(c), id);
+  return c[etapa];
+}
+
+async function reiniciarIntento(db, id, etapa) {
+  const fila = await db.getFirstAsync('SELECT intentos_etapa FROM viajes_locales WHERE id = ?', id);
+  let c = {};
+  try { c = JSON.parse(fila?.intentos_etapa || '{}') || {}; } catch { c = {}; }
+  if (!(etapa in c)) return;
+  delete c[etapa];
+  await db.runAsync('UPDATE viajes_locales SET intentos_etapa = ? WHERE id = ?', JSON.stringify(c), id);
+}
+
 async function detalle(res) {
   try {
     const j = await res.json();
@@ -200,7 +219,8 @@ async function etapaViaje(db, v, columna, etapa, llamar, alOk, prefijo) {
   if (r.ok) {
     let cuerpo = {};
     try { cuerpo = await r.json(); } catch { /* respuesta sin cuerpo */ }
-    await db.runAsync(`UPDATE viajes_locales SET ${columna} = 'synced', intentos = 0, ultimo_error = NULL WHERE id = ?`, v.id);
+    await db.runAsync(`UPDATE viajes_locales SET ${columna} = 'synced', ultimo_error = NULL WHERE id = ?`, v.id);
+    await reiniciarIntento(db, v.id, etapa);
     await anotar(db, v.id, etapa, r.status, con(cuerpo?.status || 'OK'));
     if (alOk) await alOk(cuerpo);
     return 'ok';
@@ -208,13 +228,13 @@ async function etapaViaje(db, v, columna, etapa, llamar, alOk, prefijo) {
 
   const msg = `${r.status}: ${await detalle(r)}`;
   await anotar(db, v.id, etapa, r.status, con(msg));
-  const intentos = (v.intentos || 0) + 1;
+  const intentos = await sumarIntento(db, v.id, etapa); // cada etapa cuenta sus propias fallas
   const permanente = r.status >= 400 && r.status < 500 && r.status !== 408 && r.status !== 429;
   if (permanente || intentos >= MAX_INTENTOS) {
-    await db.runAsync(`UPDATE viajes_locales SET ${columna} = 'error', intentos = ?, ultimo_error = ? WHERE id = ?`, intentos, msg, v.id);
+    await db.runAsync(`UPDATE viajes_locales SET ${columna} = 'error', ultimo_error = ? WHERE id = ?`, msg, v.id);
     return 'permanente';
   }
-  await db.runAsync('UPDATE viajes_locales SET intentos = ?, ultimo_error = ? WHERE id = ?', intentos, msg, v.id);
+  await db.runAsync('UPDATE viajes_locales SET ultimo_error = ? WHERE id = ?', msg, v.id);
   return 'servidor';
 }
 

@@ -147,6 +147,12 @@ const MIGRACIONES = [
     const cv = (await db.getAllAsync('PRAGMA table_info(viajes_locales)')).map((c) => c.name);
     if (!cv.includes('diag_envio')) await db.execAsync('ALTER TABLE viajes_locales ADD COLUMN diag_envio TEXT');
   },
+  // v8 · reintentos POR ETAPA {"inicio": 2, "foto_inicio": 4, ...}. Antes había un solo
+  //       contador (intentos) y las fallas de una foto se sumaban a las del cierre.
+  async (db) => {
+    const cv = (await db.getAllAsync('PRAGMA table_info(viajes_locales)')).map((c) => c.name);
+    if (!cv.includes('intentos_etapa')) await db.execAsync('ALTER TABLE viajes_locales ADD COLUMN intentos_etapa TEXT');
+  },
 ];
 
 async function migrar(db) {
