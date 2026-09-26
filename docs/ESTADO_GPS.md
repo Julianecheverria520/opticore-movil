@@ -1,6 +1,6 @@
 # Estado: viajes con GPS en la app (opticore-movil + AppTransporte)
 
-Última actualización: 2026-09-26. opticore-movil en GitHub (`main`, ver §6). AppTransporte: `3e454c3` local, **sin push ni despliegue**.
+Última actualización: 2026-09-26. opticore-movil en GitHub (`main`, ver §6). AppTransporte: `3e454c3` en `origin/main` (desplegándose); `dae79b0` local, **sin push ni despliegue**.
 Leer este archivo al empezar cualquier sesión sobre viajes/GPS.
 
 ---
@@ -18,7 +18,8 @@ Leer este archivo al empezar cualquier sesión sobre viajes/GPS.
 | `49a6c0b` | Paso 5 · `POST /movil/viajes/{uuid}/foto` y `/finalizar` (idempotentes) |
 | `42424e7` | Gestor de vales: distintivo REVISAR, filtro "Solo por revisar", "Marcar como revisado" (`revisado_por`, `fecha_revisado`) |
 | `29c91ee` | Escape de HTML común (`static/js/seguridad_html.js`) en todas las pantallas; `sw.js` caché v7 |
-| `3e454c3` | **Sin desplegar.** `get_current_payload` rechaza usuario inactivo / empresa SUSPENDIDO (401; 503 si la base falla). Cache `usr_ok:{id}` / `usr_ok:sub:{user}` 60 s, invalidación al cambiar `activo` y el estado de la empresa. `api/tests/test_usuario_habilitado.py` |
+| `3e454c3` | `get_current_payload` rechaza usuario inactivo / empresa SUSPENDIDO (401; 503 si la base falla). Cache `usr_ok:{id}` / `usr_ok:sub:{user}` 60 s, invalidación al cambiar `activo` y el estado de la empresa. `api/tests/test_usuario_habilitado.py` |
+| `dae79b0` | **Sin desplegar.** `POST /auth/token-movil`: token `canal=movil`, 7 días para `conductor` (`MOVIL_TOKEN_EXPIRE_MINUTES`, por defecto 10080), 8 h otros roles. Un token móvil solo entra a `/movil/*`, preoperacional validar/guardar y combustible/guardar (`auth.RUTAS_MOVIL`); en el resto 401, y no abre exportaciones ni vistas web. `/auth/token` sin cambios. `api/tests/test_token_movil.py` |
 
 Verificar en producción que `42424e7` y `29c91ee` estén desplegados.
 
@@ -51,7 +52,10 @@ Migraciones **ya ejecutadas** en Supabase: `migraciones_sql/2026_09_viajes_movil
 | `1e0de5c` | Finalizar: guarda el cierre y después apaga el GPS |
 | `5af66b5` | `POST_NOTIFICATIONS` (Android 13+): se pide al iniciar el viaje; aviso si falta. **Requiere build nuevo** |
 | `7dcd013` | Conciliación con `/movil/viajes/activo`: franja naranja en Home y confirmación al iniciar si hay viajes abiertos en el servidor que el celular no tiene |
-| (este commit) | Guía del conductor y este archivo al día |
+| `8d455a1` | Guía del conductor y este archivo al día |
+| `a18c99c` | Login con `/auth/token-movil` (respaldo a `/auth/token` si 404); "Salir" revoca el token (`/auth/logout`) |
+| `fe841e3` | Token en `expo-secure-store` (`src/sesion.js`), migración desde AsyncStorage; sin módulo nativo o si falla, sigue en AsyncStorage. **Requiere build nuevo** |
+| (este commit) | Este archivo al día |
 
 Base local del celular: SQLite `user_version` 8 (v5 GPS, v6 precisión, v7 `diag_envio`, v8 `intentos_etapa`).
 `viajes_locales.sync_status`: `pending | synced | error | descartado`; `estado_local`: `EN_CURSO | FINALIZADO | DESCARTADO`.
@@ -76,8 +80,8 @@ Base local del celular: SQLite `user_version` 8 (v5 GPS, v6 precisión, v7 `diag
 
 1. ~~Development build nuevo~~ y ~~pruebas en carro~~: **hechos el 2026-09-25** (app abierta, pantalla bloqueada, modo avión, reinicio, finalizar: todo bien). `86102E53` ya está anulado.
 2. **Prueba de noche de la foto**: anotar KB y segundos del diagnóstico.
-3. **Orden acordado (2026-09-26)**: desplegar backend `3e454c3` → development build nuevo (por `POST_NOTIFICATIONS`) → probar en OptiCore DEV → **después** build `preview` (piloto v2, 1.1.0, ver §7) y repetir "cerrada desde recientes" y "sin todo el tiempo".
-4. **Token de 7 días solo para la app (mejora 3b)**: diseño propuesto, **pendiente de aprobación**; va después de desplegar `3e454c3`.
+3. **Orden acordado (2026-09-26)**: desplegar backend `3e454c3` y `dae79b0` → development build nuevo (`POST_NOTIFICATIONS` + `expo-secure-store`) → probar en OptiCore DEV → **después** build `preview` (piloto v2, 1.1.0, ver §7) y repetir "cerrada desde recientes" y "sin todo el tiempo".
+4. ~~Token de 7 días (3b)~~ y ~~secure-store~~: hechos (`dae79b0`, `a18c99c`, `fe841e3`). Las sesiones abiertas antes siguen con su token de 8 h hasta que venza; el siguiente login ya usa `/auth/token-movil`.
 6. **Después del piloto (mejora 8)**: distancia acumulada en vez de releer todos los puntos cada 10 s, prueba de volumen de puntos, limpieza de fotos huérfanas (con error que nunca se borran).
 7. **Paso 12 · piloto** con 1 volqueta en paralelo a la PWA, 2–3 días: comparar recorridos, batería y viajes perdidos.
 8. ~~Usuarios inactivos~~: hecho en `3e454c3` (falta desplegar).
@@ -96,6 +100,7 @@ Base local del celular: SQLite `user_version` 8 (v5 GPS, v6 precisión, v7 `diag
 - **Cola del viaje**: inicio → puntos → foto de carga → foto de descarga → cierre. Las **fotos no bloquean**; el **cierre espera** a que no queden puntos. Toda falla queda en `diag_envio`. Cada etapa cuenta sus fallas (`intentos_etapa`); 4xx (salvo 408/429) o 5 fallas → error de esa etapa. Una foto SIN RESPUESTA espera 5 min antes de reintentarse.
 - **Viaje con problema**: el conductor decide **Reintentar** (etapas en error y puntos rechazados vuelven a la cola) o **Descartar** (deja de enviar; borra fotos y puntos no enviados del celular; lo que ya está en el servidor lo anula el admin).
 - **401 por usuario inactivo / empresa suspendida** = sesión vencida: la app no borra la cola. 503 = reintentar.
+- **Token de la app**: `/auth/token-movil`, 7 días solo para conductores, limitado a las rutas de la app; guardado en SecureStore (Keystore), excluido de las copias de seguridad de Android. Una ruta nueva que use la app con token debe agregarse a `auth.RUTAS_MOVIL` o responderá 401.
 - **Fotos**: ≤1600 px de ancho, JPEG 0.7, subida nativa multipart, límite 120 s.
 - **Web**: `seguridad_html.js` (`escaparHTML`, `argJS`, `urlSegura`) para todo texto del servidor insertado con `innerHTML`.
 
