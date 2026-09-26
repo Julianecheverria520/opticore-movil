@@ -9,7 +9,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { API_URL } from '../config';
 import { getDb, parseNum } from '../database/db';
 import { enviarPendientes } from '../database/syncUp';
-import { iniciarGPS } from '../gps/control';
+import { iniciarGPS, pedirPermisoNotificaciones } from '../gps/control';
 import {
   preoperacionalRequerido, ordenarOrigenes, validarCantidad, capacidadEquipo,
   guardarFoto, borrarArchivo, crearViajeLocal, viajeEnCurso, uuidViaje, RADIO_CERCANOS_KM,
@@ -217,6 +217,7 @@ export default function ViajeScreen({ route, navigation }) {
       iniciado.current = true;
       // 1) Permiso en primer plano + GPS como servicio en primer plano. Tiene que arrancar
       //    AHORA, con la app visible: Android no deja crearlo desde segundo plano.
+      await pedirPermisoNotificaciones(); // aviso "Viaje en curso" en la barra (Android 13+); si lo niega, sigue
       const gps = await iniciarGPS(placa);
       enviarPendientes().catch(() => {});
       // 2) Si falta "Permitir todo el tiempo", pantalla propia que explica por qué y luego

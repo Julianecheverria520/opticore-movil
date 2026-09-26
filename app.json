@@ -23,7 +23,8 @@
       "edgeToEdgeEnabled": true,
       "package": "com.julianecheverria.opticoremovil",
       "permissions": [
-        "android.permission.RECEIVE_BOOT_COMPLETED"
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.POST_NOTIFICATIONS"
       ],
       "blockedPermissions": [
         "android.permission.RECORD_AUDIO"

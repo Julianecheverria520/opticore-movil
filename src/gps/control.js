@@ -1,5 +1,6 @@
 // src/gps/control.js · iniciar / detener / reanudar el GPS del viaje
 import * as Location from 'expo-location';
+import { Platform, PermissionsAndroid } from 'react-native';
 
 import { viajeEnCurso } from '../viajes';
 
@@ -23,19 +24,36 @@ export function opcionesGPS(placa) {
   };
 }
 
+// Android 13+ (API 33): sin este permiso el servicio de ubicación funciona igual, pero su
+// aviso "Viaje en curso" no aparece en la barra y el conductor no ve que se está registrando.
+const PERMISO_NOTIFICACIONES = 'android.permission.POST_NOTIFICATIONS';
+const pideNotificaciones = () => Platform.OS === 'android' && Number(Platform.Version) >= 33;
+
+/** Pide el permiso de notificaciones (solo Android 13+). Nunca bloquea el viaje. */
+export async function pedirPermisoNotificaciones() {
+  if (!pideNotificaciones()) return true;
+  try {
+    return (await PermissionsAndroid.request(PERMISO_NOTIFICACIONES)) === PermissionsAndroid.RESULTS.GRANTED;
+  } catch {
+    return false;
+  }
+}
+
 /** Estado de permisos y de la tarea. */
 export async function estadoGPS() {
-  const [fg, bg, corriendo, servicios] = await Promise.all([
+  const [fg, bg, corriendo, servicios, notificaciones] = await Promise.all([
     Location.getForegroundPermissionsAsync().catch(() => ({ status: 'undetermined' })),
     Location.getBackgroundPermissionsAsync().catch(() => ({ status: 'undetermined' })),
     Location.hasStartedLocationUpdatesAsync(TAREA_GPS).catch(() => false),
     Location.hasServicesEnabledAsync().catch(() => true),
+    pideNotificaciones() ? PermissionsAndroid.check(PERMISO_NOTIFICACIONES).catch(() => true) : true,
   ]);
   return {
     permisoPrimerPlano: fg.status === 'granted',
     permisoSegundoPlano: bg.status === 'granted',
     corriendo: !!corriendo,
     ubicacionActivada: !!servicios,
+    notificaciones: !!notificaciones,
   };
 }
 

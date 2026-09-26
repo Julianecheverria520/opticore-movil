@@ -257,6 +257,15 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
             </View>
           </View>
         ) : null}
+        {enCurso && gps && gps.corriendo && !gps.notificaciones ? (
+          <View style={styles.aviso}>
+            <FontAwesome5 name="bell-slash" size={14} color="#92400e" style={{ marginRight: 8 }} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.avisoTexto}>Sin permiso de notificaciones no verás el aviso "Viaje en curso" en la barra. El recorrido se registra igual.</Text>
+              <TouchableOpacity onPress={() => Linking.openSettings()}><Text style={styles.enlace}>Abrir ajustes → Notificaciones → Permitir</Text></TouchableOpacity>
+            </View>
+          </View>
+        ) : null}
         {enCurso && gps && gps.permisoPrimerPlano && !gps.corriendo ? (
           <TouchableOpacity style={styles.btnSecundario} onPress={reintentarGps}>
             <Text style={styles.btnSecundarioTexto}>Reintentar GPS</Text>
