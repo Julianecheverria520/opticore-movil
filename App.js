@@ -10,6 +10,8 @@ import LoginScreen from './src/screens/LoginScreen';
 import HomeScreen from './src/screens/HomeScreen';
 import PreoperacionalScreen from './src/screens/PreoperacionalScreen';
 import CombustibleScreen from './src/screens/CombustibleScreen';
+import ViajeScreen from './src/screens/ViajeScreen';
+import ViajeEnCursoScreen from './src/screens/ViajeEnCursoScreen';
 
 // Base de datos y Sincronización
 import { iniciarBaseDeDatos } from './src/database/db';
@@ -128,6 +130,8 @@ export default function App() {
             <Stack.Screen name="Home" component={HomeScreen} options={{ headerShown: false }} />
             <Stack.Screen name="Preoperacional" component={PreoperacionalScreen} options={{ headerShown: false }} />
             <Stack.Screen name="Combustible" component={CombustibleScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="Viaje" component={ViajeScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="ViajeEnCurso" component={ViajeEnCursoScreen} options={{ headerShown: false }} />
           </>
         )}
       </Stack.Navigator>

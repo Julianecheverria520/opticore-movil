@@ -1,0 +1,202 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { StyleSheet, Text, View, TouchableOpacity, ScrollView, Alert, ActivityIndicator } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { FontAwesome5 } from '@expo/vector-icons';
+import * as Location from 'expo-location';
+import * as ImagePicker from 'expo-image-picker';
+
+import { enviarPendientes } from '../database/syncUp';
+import { obtenerViaje, viajeEnCurso, guardarFoto, borrarArchivo, finalizarViajeLocal } from '../viajes';
+
+// Cómo se muestra cada estado de una etapa del envío
+const ETAPA = {
+  synced: { texto: 'Enviado', color: '#10b981', icono: 'check-circle' },
+  pending: { texto: 'Pendiente', color: '#f59e0b', icono: 'clock' },
+  error: { texto: 'Con error', color: '#ef4444', icono: 'exclamation-circle' },
+};
+
+function FilaEtapa({ titulo, estado, nota }) {
+  const e = ETAPA[estado] || ETAPA.pending;
+  return (
+    <View style={styles.filaEtapa}>
+      <FontAwesome5 name={e.icono} size={16} color={e.color} style={{ width: 24 }} />
+      <Text style={styles.filaEtapaTitulo}>{titulo}</Text>
+      <Text style={[styles.filaEtapaEstado, { color: e.color }]}>{nota || e.texto}</Text>
+    </View>
+  );
+}
+
+async function ubicacionConocida() {
+  try {
+    const { status } = await Location.getForegroundPermissionsAsync();
+    if (status !== 'granted') return null;
+    const u = await Location.getLastKnownPositionAsync();
+    return u ? { lat: u.coords.latitude, lon: u.coords.longitude } : null;
+  } catch {
+    return null;
+  }
+}
+
+export default function ViajeEnCursoScreen({ route, navigation }) {
+  const [viaje, setViaje] = useState(null);
+  const [cargando, setCargando] = useState(true);
+  const [enviando, setEnviando] = useState(false);
+  const [finalizando, setFinalizando] = useState(false);
+
+  const recargar = useCallback(async () => {
+    const v = route.params?.uuid ? await obtenerViaje(route.params.uuid) : await viajeEnCurso();
+    setViaje(v);
+    setCargando(false);
+  }, [route.params?.uuid]);
+
+  const enviarAhora = useCallback(async () => {
+    setEnviando(true);
+    try { await enviarPendientes(); } finally { await recargar(); setEnviando(false); }
+  }, [recargar]);
+
+  useEffect(() => {
+    recargar();
+    enviarAhora();
+    const t = setInterval(recargar, 10000); // refleja lo que la cola va subiendo
+    return () => clearInterval(t);
+  }, [recargar, enviarAhora]);
+
+  const finalizar = async () => {
+    Alert.alert('Finalizar viaje', 'Toma la foto de la descarga para cerrar el viaje.', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Tomar foto',
+        onPress: async () => {
+          let fotoFin = null;
+          try {
+            const { status } = await ImagePicker.requestCameraPermissionsAsync();
+            if (status !== 'granted') { Alert.alert('Cámara', 'Se necesita permiso de cámara para la foto de descarga.'); return; }
+            const r = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.5 });
+            if (r.canceled || !r.assets?.length) return;
+            setFinalizando(true);
+            fotoFin = await guardarFoto(r.assets[0].uri, viaje.uuid, 'fin');
+            const pos = await ubicacionConocida();
+            await finalizarViajeLocal(viaje.uuid, { fotoFinPath: fotoFin, lat: pos?.lat, lon: pos?.lon });
+            enviarPendientes().catch(() => {});
+            Alert.alert('✅ Viaje finalizado', 'Quedó guardado en el celular y se enviará automáticamente cuando haya señal.', [
+              { text: 'OK', onPress: () => navigation.navigate('Home') },
+            ]);
+          } catch (e) {
+            if (fotoFin) borrarArchivo(fotoFin);
+            Alert.alert('Error', 'No se pudo finalizar el viaje en el celular.');
+          } finally {
+            setFinalizando(false);
+          }
+        },
+      },
+    ]);
+  };
+
+  if (cargando) {
+    return <View style={styles.centro}><ActivityIndicator size="large" color="#f59e0b" /></View>;
+  }
+
+  if (!viaje) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.centro}>
+          <Text style={styles.vacio}>No hay un viaje en curso en este celular.</Text>
+          <TouchableOpacity style={styles.btnSecundario} onPress={() => navigation.navigate('Home')}>
+            <Text style={styles.btnSecundarioTexto}>Volver</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const enCurso = viaje.estado_local === 'EN_CURSO';
+  const inicioConError = viaje.sync_inicio === 'error';
+
+  return (
+    <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
+      <View style={styles.mobileHeader}>
+        <TouchableOpacity onPress={() => navigation.navigate('Home')} style={styles.backBtn}>
+          <FontAwesome5 name="arrow-left" size={20} color="#ffffff" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>{enCurso ? 'Viaje en curso' : 'Viaje finalizado'}</Text>
+        <View style={{ width: 20 }} />
+      </View>
+
+      <ScrollView contentContainerStyle={styles.contenido}>
+        <View style={[styles.tarjeta, { borderLeftColor: enCurso ? '#f59e0b' : '#10b981' }]}>
+          <Text style={styles.placa}>{viaje.placa}</Text>
+          <Text style={styles.ruta}>{viaje.origen} ➔ {viaje.destino}</Text>
+          {viaje.ruta_nombre ? <Text style={styles.detalle}>Ruta: {viaje.ruta_nombre}</Text> : null}
+          <Text style={styles.detalle}>Material: {viaje.material}{viaje.cantidad ? ` • ${viaje.cantidad}` : ''}</Text>
+          <Text style={styles.detalle}>Remisión: {viaje.remision}</Text>
+          <Text style={styles.detalle}>Inicio: {String(viaje.fecha_inicio_iso || '').replace('T', ' ').slice(0, 16)}</Text>
+          {viaje.id_viaje_servidor ? <Text style={styles.detalle}>ID en el sistema: #{viaje.id_viaje_servidor}</Text> : null}
+        </View>
+
+        <Text style={styles.subtitulo}>Estado de envío</Text>
+        <View style={styles.tarjetaEtapas}>
+          <FilaEtapa titulo="Inicio del viaje" estado={viaje.sync_inicio} />
+          <FilaEtapa titulo="Foto de carga" estado={viaje.sync_foto_inicio} />
+          <FilaEtapa titulo="Recorrido GPS" estado="pending" nota="Próximamente" />
+          <FilaEtapa titulo="Foto de descarga" estado={enCurso ? 'pending' : viaje.sync_foto_fin} nota={enCurso ? 'Al finalizar' : null} />
+          <FilaEtapa titulo="Cierre del viaje" estado={enCurso ? 'pending' : viaje.sync_fin} nota={enCurso ? 'Al finalizar' : null} />
+        </View>
+
+        {viaje.requiere_revision ? (
+          <View style={styles.aviso}>
+            <FontAwesome5 name="exclamation-triangle" size={14} color="#92400e" style={{ marginRight: 8 }} />
+            <Text style={styles.avisoTexto}>El sistema lo marcó para revisión del administrador: {viaje.motivo_revision}</Text>
+          </View>
+        ) : null}
+        {viaje.ultimo_error ? (
+          <View style={[styles.aviso, { backgroundColor: '#fef2f2' }]}>
+            <FontAwesome5 name="info-circle" size={14} color="#b91c1c" style={{ marginRight: 8 }} />
+            <Text style={[styles.avisoTexto, { color: '#b91c1c' }]}>
+              {inicioConError ? 'El servidor rechazó el viaje: ' : 'Último error: '}{viaje.ultimo_error}
+            </Text>
+          </View>
+        ) : null}
+
+        <TouchableOpacity style={styles.btnSecundario} onPress={enviarAhora} disabled={enviando}>
+          {enviando ? <ActivityIndicator color="#0f172a" /> : <Text style={styles.btnSecundarioTexto}>Enviar ahora</Text>}
+        </TouchableOpacity>
+
+        {enCurso ? (
+          <TouchableOpacity style={[styles.btnFinalizar, finalizando && { backgroundColor: '#94a3b8' }]} onPress={finalizar} disabled={finalizando}>
+            {finalizando ? <ActivityIndicator color="#fff" /> : (
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <FontAwesome5 name="flag-checkered" size={18} color="#fff" style={{ marginRight: 10 }} />
+                <Text style={styles.btnFinalizarTexto}>Finalizar viaje</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        ) : null}
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  safeArea: { flex: 1, backgroundColor: '#0f172a' },
+  centro: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0f172a', padding: 20 },
+  vacio: { color: '#cbd5e1', fontSize: 16, marginBottom: 20, textAlign: 'center' },
+  mobileHeader: { backgroundColor: '#0f172a', paddingVertical: 15, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  backBtn: { padding: 5 },
+  headerTitle: { color: '#ffffff', fontSize: 18, fontWeight: '700' },
+  contenido: { padding: 20, paddingBottom: 50, backgroundColor: '#f8fafc', flexGrow: 1 },
+  tarjeta: { backgroundColor: '#fff', borderRadius: 12, padding: 18, borderLeftWidth: 6, marginBottom: 20 },
+  placa: { fontSize: 26, fontWeight: '900', color: '#0f172a', letterSpacing: 1 },
+  ruta: { fontSize: 17, fontWeight: '800', color: '#1e40af', marginTop: 6, marginBottom: 8 },
+  detalle: { fontSize: 14, color: '#475569', marginTop: 3 },
+  subtitulo: { fontSize: 13, color: '#475569', fontWeight: '800', marginBottom: 8, textTransform: 'uppercase' },
+  tarjetaEtapas: { backgroundColor: '#fff', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 6, marginBottom: 16 },
+  filaEtapa: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderColor: '#f1f5f9' },
+  filaEtapaTitulo: { flex: 1, fontSize: 15, color: '#0f172a', fontWeight: '600' },
+  filaEtapaEstado: { fontSize: 13, fontWeight: '800' },
+  aviso: { flexDirection: 'row', alignItems: 'flex-start', backgroundColor: '#fffbeb', padding: 12, borderRadius: 8, marginBottom: 12 },
+  avisoTexto: { flex: 1, color: '#92400e', fontSize: 13, fontWeight: '600' },
+  btnSecundario: { backgroundColor: '#e2e8f0', padding: 15, borderRadius: 8, alignItems: 'center', marginBottom: 12 },
+  btnSecundarioTexto: { color: '#0f172a', fontWeight: '900', fontSize: 15 },
+  btnFinalizar: { backgroundColor: '#ef4444', padding: 18, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  btnFinalizarTexto: { color: '#fff', fontWeight: '900', fontSize: 19 },
+});

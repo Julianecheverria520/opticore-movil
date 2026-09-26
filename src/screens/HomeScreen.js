@@ -11,6 +11,7 @@ import { getDb, esMaquinaria } from '../database/db';
 import { sincronizarDatosMaestros, ultimoMotivoSync } from '../database/sync';
 import { enviarPendientes, contarPendientes, iniciarAutoSync } from '../database/syncUp';
 import { API_URL } from '../config';
+import { viajeEnCurso } from '../viajes';
 
 // R7 · Estado de conexión con tres causas distintas, para que el operador sepa qué hacer
 const ESTADOS = {
@@ -36,6 +37,10 @@ export default function HomeScreen({ navigation }) {
   // Estado de la cola de envíos
   const [pendientes, setPendientes] = useState({ pendientes: 0, errores: 0 });
   const sincronizando = useRef(false);
+
+  // Viaje en curso en este celular (solo puede haber uno)
+  const [viajeActivo, setViajeActivo] = useState(null);
+  const refrescarViaje = useCallback(async () => { try { setViajeActivo(await viajeEnCurso()); } catch {} }, []);
 
   const sincronizarFondo = useCallback(async () => {
     if (sincronizando.current) return;
@@ -69,10 +74,11 @@ export default function HomeScreen({ navigation }) {
       setEstadoRed('sin_red');
     } finally {
       try { setPendientes(await contarPendientes()); } catch {}
+      refrescarViaje();
       setIsSyncing(false);
       sincronizando.current = false;
     }
-  }, []);
+  }, [refrescarViaje]);
 
   useEffect(() => {
     async function inicializar() {
@@ -97,9 +103,10 @@ export default function HomeScreen({ navigation }) {
   useEffect(() => {
     const unsub = navigation.addListener('focus', async () => {
       try { setPendientes(await contarPendientes()); } catch {}
+      refrescarViaje();
     });
     return unsub;
-  }, [navigation]);
+  }, [navigation, refrescarViaje]);
 
   // Re-login desde el aviso de sesión vencida: guarda el token nuevo y reintenta el envío
   const reloginExitoso = async (token, username) => {
@@ -180,6 +187,23 @@ export default function HomeScreen({ navigation }) {
     </TouchableOpacity>
   ) : null;
 
+  // Aviso de viaje en curso: visible en la selección de equipo y en el panel
+  const avisoViaje = viajeActivo ? (
+    <TouchableOpacity style={styles.bannerViaje} onPress={() => navigation.navigate('ViajeEnCurso', { uuid: viajeActivo.uuid })}>
+      <FontAwesome5 name="route" size={16} color="#0f172a" />
+      <View style={{ flex: 1, marginLeft: 10 }}>
+        <Text style={styles.bannerTitulo}>Viaje en curso • {viajeActivo.placa}</Text>
+        <Text style={styles.bannerTexto}>{viajeActivo.origen} ➔ {viajeActivo.destino} • toca para ver o finalizar</Text>
+      </View>
+      <FontAwesome5 name="chevron-right" size={12} color="#0f172a" />
+    </TouchableOpacity>
+  ) : null;
+
+  const abrirViaje = () => {
+    if (viajeActivo) navigation.navigate('ViajeEnCurso', { uuid: viajeActivo.uuid });
+    else navigation.navigate('Viaje', { placa: equipoActual.placa });
+  };
+
   const modalLogin = (
     <Modal visible={pedirLogin} animationType="slide" onRequestClose={() => setPedirLogin(false)}>
       <View style={{ flex: 1 }}>
@@ -207,6 +231,7 @@ export default function HomeScreen({ navigation }) {
             </TouchableOpacity>
           </View>
           {avisoSesion}
+          {avisoViaje}
           <TouchableOpacity style={styles.btnQrGiant} onPress={() => { setScanned(false); setShowCamera(true); }}>
             <FontAwesome5 name="qrcode" size={40} color="#fff" style={{ marginBottom: 15 }} />
             <Text style={styles.btnQrTextGiant}>Escanear Código QR</Text>
@@ -263,6 +288,7 @@ export default function HomeScreen({ navigation }) {
         </View>
 
         {avisoSesion}
+        {avisoViaje}
 
         <View style={styles.equipoCard}>
           <View style={styles.equipoIconWrap}><FontAwesome5 name={equipoActual.usaHoras ? 'tractor' : 'truck'} size={28} color="#fff" /></View>
@@ -288,6 +314,14 @@ export default function HomeScreen({ navigation }) {
             <View style={[styles.iconLightWrap, { backgroundColor: 'rgba(255,255,255,0.2)' }]}><FontAwesome5 name="gas-pump" size={18} color="#fff" /></View>
             <Text style={styles.cardTitle}>Combustible</Text>
             <Text style={styles.cardSubtitle}>Suministro</Text>
+            <FontAwesome5 name="chevron-right" size={12} color="#fff" style={styles.chevronPos} />
+          </TouchableOpacity>
+        </View>
+        <View style={styles.row}>
+          <TouchableOpacity style={[styles.cardPrimary, { backgroundColor: '#f59e0b', minHeight: 110 }]} onPress={abrirViaje}>
+            <View style={[styles.iconLightWrap, { backgroundColor: 'rgba(255,255,255,0.25)' }]}><FontAwesome5 name="route" size={18} color="#fff" /></View>
+            <Text style={styles.cardTitle}>{viajeActivo ? 'Viaje en curso' : 'Viaje'}</Text>
+            <Text style={styles.cardSubtitle}>{viajeActivo ? `${viajeActivo.placa} • ${viajeActivo.origen} ➔ ${viajeActivo.destino}` : 'Iniciar un viaje con carga'}</Text>
             <FontAwesome5 name="chevron-right" size={12} color="#fff" style={styles.chevronPos} />
           </TouchableOpacity>
         </View>
@@ -324,6 +358,7 @@ const styles = StyleSheet.create({
   btnTopSmall: { backgroundColor: '#1e293b', width: 40, height: 40, borderRadius: 8, justifyContent: 'center', alignItems: 'center' },
   bannerSesion: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fbbf24', borderRadius: 12, padding: 14, marginBottom: 15 },
   bannerTitulo: { color: '#0f172a', fontWeight: '900', fontSize: 14 },
+  bannerViaje: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fcd34d', borderRadius: 12, padding: 14, marginBottom: 15 },
   bannerTexto: { color: '#1e293b', fontSize: 12, marginTop: 2 },
   btnCerrarModal: { position: 'absolute', top: 50, right: 20, backgroundColor: '#1e293b', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8 },
   btnCerrarModalText: { color: '#fff', fontWeight: 'bold' },
