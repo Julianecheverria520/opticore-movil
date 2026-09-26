@@ -16,6 +16,9 @@ import { fetchConTimeout } from '../red';
 import { viajeEnCurso, viajesConProblema, viajesAbiertosAjenos, describirAjenos } from '../viajes';
 import { asegurarGPS } from '../gps/control';
 
+// Equipo recordado: la última placa validada en este celular (se borra con "Cambiar" y "Salir")
+const CLAVE_EQUIPO = 'equipoRecordado';
+
 // R7 · Estado de conexión con tres causas distintas, para que el operador sepa qué hacer
 const ESTADOS = {
   ok: { texto: 'EN LÍNEA', color: '#10b981' },
@@ -27,6 +30,8 @@ const ESTADOS = {
 export default function HomeScreen({ navigation }) {
   const [hasPermission, setHasPermission] = useState(null);
   const [equipoActual, setEquipoActual] = useState(null); // { placa, tipo, usaHoras }
+  const equipoRef = useRef(null);
+  equipoRef.current = equipoActual;
   const [placaInput, setPlacaInput] = useState('');
 
   const [scanned, setScanned] = useState(false);
@@ -104,8 +109,14 @@ export default function HomeScreen({ navigation }) {
       // forzado), se reanuda ahora: Android solo lo permite con la app abierta.
       asegurarGPS().catch(() => {});
 
+      // Equipo recordado: entra directo al panel del equipo (el preoperacional se sigue
+      // exigiendo al iniciar el viaje, igual que antes)
+      const restaurado = await restaurarEquipo();
+
       // Sincronización inicial al abrir (única; el listener ya no dispara otra en paralelo)
       await sincronizarFondo();
+      // Primer uso sin equipos descargados: se reintenta con la lista recién bajada
+      if (!restaurado && !equipoRef.current) await restaurarEquipo();
     }
 
     inicializar();
@@ -168,11 +179,41 @@ export default function HomeScreen({ navigation }) {
               await fetchConTimeout(`${API_URL}/auth/logout`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }, 5000).catch(() => {});
             }
             await borrarToken();
+            await AsyncStorage.removeItem(CLAVE_EQUIPO);
             Updates.reloadAsync();
           },
         },
       ]
     );
+  };
+
+  /**
+   * Al abrir: si hay viaje en curso manda su placa; si no, la placa recordada. Solo se usa
+   * si existe en los equipos descargados (sin alertas). Si la lista existe y la placa ya no
+   * está (equipo retirado), se olvida. Devuelve true si entró al panel.
+   */
+  async function restaurarEquipo() {
+    try {
+      const viaje = await viajeEnCurso();
+      const guardada = await AsyncStorage.getItem(CLAVE_EQUIPO);
+      const placa = viaje?.placa || guardada;
+      if (!placa) return false;
+      const db = await getDb();
+      const eq = await db.getFirstAsync('SELECT * FROM equipos WHERE placa = ?', placa);
+      if (eq) {
+        if (!equipoRef.current) setEquipoActual({ placa: eq.placa, tipo: eq.tipo || 'VEHÍCULO', usaHoras: esMaquinaria(eq) });
+        return true;
+      }
+      const { n } = await db.getFirstAsync('SELECT COUNT(*) AS n FROM equipos');
+      if (n > 0 && guardada === placa) await AsyncStorage.removeItem(CLAVE_EQUIPO);
+    } catch { /* sin equipo recordado: se muestra la selección como siempre */ }
+    return false;
+  }
+
+  const cambiarEquipo = async () => {
+    setEquipoActual(null);
+    setPlacaInput('');
+    try { await AsyncStorage.removeItem(CLAVE_EQUIPO); } catch { /* no bloquea */ }
   };
 
   // E7 · Solo se aceptan placas que existen en los equipos descargados
@@ -186,6 +227,7 @@ export default function HomeScreen({ navigation }) {
       const eq = await db.getFirstAsync('SELECT * FROM equipos WHERE placa = ?', placaClean);
       if (eq) {
         setEquipoActual({ placa: eq.placa, tipo: eq.tipo || 'VEHÍCULO', usaHoras: esMaquinaria(eq) });
+        await AsyncStorage.setItem(CLAVE_EQUIPO, eq.placa);
         return;
       }
 
@@ -369,7 +411,7 @@ export default function HomeScreen({ navigation }) {
             <Text style={styles.equipoName}>{equipoActual.placa}</Text>
             <Text style={styles.equipoDesc}>{equipoActual.tipo} • {equipoActual.usaHoras ? 'Horómetro' : 'Odómetro'}</Text>
           </View>
-          <TouchableOpacity style={styles.btnCambiar} onPress={() => { setEquipoActual(null); setPlacaInput(''); }}>
+          <TouchableOpacity style={styles.btnCambiar} onPress={cambiarEquipo}>
             <FontAwesome5 name="exchange-alt" size={12} color="#fff" />
             <Text style={styles.btnCambiarText}>Cambiar</Text>
           </TouchableOpacity>
