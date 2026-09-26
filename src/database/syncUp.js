@@ -175,7 +175,7 @@ async function procesarCola(db, { tabla, ruta, armar }, token, usuario) {
 }
 
 // ── VIAJES ────────────────────────────────────────────────────────────────────
-// Un viaje sube por etapas y en orden: inicio -> foto_inicio -> puntos GPS
+// Un viaje sube por etapas y en orden: inicio -> puntos GPS -> foto_inicio
 // -> foto_fin -> fin (el fin solo cuando no quedan puntos). Cada etapa es idempotente en el servidor (uuid_cliente), así que
 // un reintento tras un timeout nunca duplica nada. Reglas iguales a las otras colas:
 //   · sin red / 401 -> se detiene sin tocar nada
@@ -238,9 +238,22 @@ async function etapaViaje(db, v, columna, etapa, llamar, alOk, prefijo) {
   return 'servidor';
 }
 
+// Una foto que se quedó SIN RESPUESTA (timeout de 120 s) no se reintenta en cada pasada
+// durante este tiempo: con señal débil cada intento bloquea la cola hasta 2 minutos.
+// "Enviar ahora" la fuerza (opciones.forzarFotos).
+const PAUSA_FOTO_MS = 5 * 60000;
+function fotoEnPausa(v, etapa, opciones) {
+  if (opciones.forzarFotos) return false;
+  let d;
+  try { d = (JSON.parse(v.diag_envio || '{}') || {})[etapa]; } catch { return false; }
+  if (!d || d.codigo !== 'SIN RESPUESTA') return false;
+  const t = Date.parse(d.hora);
+  return Number.isFinite(t) && Date.now() - t < PAUSA_FOTO_MS;
+}
+
 const DETENER = { sin_red: { sinRed: true }, sesion: { sesionExpirada: true }, servidor: { servidorNoDisponible: true } };
 
-async function procesarViajes(db, token, usuario) {
+async function procesarViajes(db, token, usuario, opciones = {}) {
   const res = { enviados: 0, errores: 0 };
   const viajes = await db.getAllAsync(
     `SELECT * FROM viajes_locales WHERE sync_status = 'pending' AND (usuario IS NULL OR usuario = ?) ORDER BY id ASC`,
@@ -268,20 +281,7 @@ async function procesarViajes(db, token, usuario) {
     }
     if (v.sync_inicio !== 'synced') continue;
 
-    // 2. FOTO DE INICIO
-    if (v.sync_foto_inicio === 'pending') {
-      if (!existeArchivo(v.foto_inicio_path)) {
-        await db.runAsync("UPDATE viajes_locales SET sync_foto_inicio = 'error', ultimo_error = 'Foto de inicio no encontrada en el celular' WHERE id = ?", v.id);
-        await anotar(db, v.id, 'foto_inicio', 'SIN ARCHIVO', 'Foto de inicio no encontrada en el celular');
-      } else {
-        const e = await etapaFoto(db, v, 'sync_foto_inicio', 'foto_inicio', `${base}/foto?tipo=inicio`, token, v.foto_inicio_path);
-        if (e === 'sesion') return { ...res, ...DETENER[e] };
-        // cualquier otro fallo de la foto NO detiene: los puntos y el cierre siguen
-      }
-      await recargar();
-    }
-
-    // 3. PUNTOS GPS: lotes de hasta 200 ordenados por seq. Solo un 2xx los marca enviados.
+    // 2. PUNTOS GPS: lotes de hasta 200 ordenados por seq. Solo un 2xx los marca enviados.
     //    El servidor ignora los que ya tenía (id_viaje, seq), así que reenviar es seguro.
     for (let lote = 0; lote < MAX_LOTES_POR_PASADA; lote++) {
       const puntos = await lotePendiente(v.uuid);
@@ -318,10 +318,23 @@ async function procesarViajes(db, token, usuario) {
       return { ...res, servidorNoDisponible: true };
     }
 
+    // 3. FOTO DE INICIO (después de los puntos: una foto lenta no retrasa el recorrido)
+    if (v.sync_foto_inicio === 'pending' && !fotoEnPausa(v, 'foto_inicio', opciones)) {
+      if (!existeArchivo(v.foto_inicio_path)) {
+        await db.runAsync("UPDATE viajes_locales SET sync_foto_inicio = 'error', ultimo_error = 'Foto de inicio no encontrada en el celular' WHERE id = ?", v.id);
+        await anotar(db, v.id, 'foto_inicio', 'SIN ARCHIVO', 'Foto de inicio no encontrada en el celular');
+      } else {
+        const e = await etapaFoto(db, v, 'sync_foto_inicio', 'foto_inicio', `${base}/foto?tipo=inicio`, token, v.foto_inicio_path);
+        if (e === 'sesion') return { ...res, ...DETENER[e] };
+        // cualquier otro fallo de la foto NO detiene: los puntos y el cierre siguen
+      }
+      await recargar();
+    }
+
     if (v.estado_local !== 'FINALIZADO') continue;
 
     // 4. FOTO DE FIN
-    if (v.sync_foto_fin === 'pending') {
+    if (v.sync_foto_fin === 'pending' && !fotoEnPausa(v, 'foto_fin', opciones)) {
       if (!existeArchivo(v.foto_fin_path)) {
         await db.runAsync("UPDATE viajes_locales SET sync_foto_fin = 'error', ultimo_error = 'Foto de fin no encontrada en el celular' WHERE id = ?", v.id);
         await anotar(db, v.id, 'foto_fin', 'SIN ARCHIVO', 'Foto de fin no encontrada en el celular');
@@ -359,10 +372,11 @@ async function procesarViajes(db, token, usuario) {
 }
 
 /**
- * Sube la cola. Con un 401 devuelve { sesionExpirada: true } y NO borra nada:
+ * Sube la cola. opciones.forzarFotos: reintenta también las fotos en pausa (botón "Enviar ahora").
+ * Con un 401 devuelve { sesionExpirada: true } y NO borra nada:
  * la pantalla decide pedir credenciales sin sacar al operador de la app (E3).
  */
-export async function enviarPendientes() {
+export async function enviarPendientes(opciones = {}) {
   if (enviando) return { omitido: true };
   enviando = true;
   try {
@@ -384,7 +398,7 @@ export async function enviarPendientes() {
       if (r.sinRed || r.sesionExpirada || r.servidorNoDisponible) return { ...r, enviados: total.enviados, errores: total.errores };
     }
 
-    const rv = await procesarViajes(db, token, usuario);
+    const rv = await procesarViajes(db, token, usuario, opciones);
     total.enviados += rv.enviados;
     total.errores += rv.errores;
     if (rv.sinRed || rv.sesionExpirada || rv.servidorNoDisponible) return { ...rv, enviados: total.enviados, errores: total.errores };

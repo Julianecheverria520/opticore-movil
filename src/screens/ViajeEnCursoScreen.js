@@ -81,7 +81,7 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
 
   const enviarAhora = useCallback(async () => {
     setEnviando(true);
-    try { await enviarPendientes(); } finally { await recargar(); setEnviando(false); }
+    try { await enviarPendientes({ forzarFotos: true }); } finally { await recargar(); setEnviando(false); }
   }, [recargar]);
 
   useEffect(() => {
