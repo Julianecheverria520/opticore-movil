@@ -1,3 +1,6 @@
+// La tarea GPS se define ANTES que todo: Android puede despertar la app sin interfaz
+// solo para entregar puntos, y la tarea tiene que existir en ese momento.
+import './src/gps/tarea';
 import { registerRootComponent } from 'expo';
 
 import App from './App';

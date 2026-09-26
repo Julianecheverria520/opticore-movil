@@ -12,6 +12,7 @@ import { sincronizarDatosMaestros, ultimoMotivoSync } from '../database/sync';
 import { enviarPendientes, contarPendientes, iniciarAutoSync } from '../database/syncUp';
 import { API_URL } from '../config';
 import { viajeEnCurso } from '../viajes';
+import { asegurarGPS } from '../gps/control';
 
 // R7 · Estado de conexión con tres causas distintas, para que el operador sepa qué hacer
 const ESTADOS = {
@@ -88,6 +89,10 @@ export default function HomeScreen({ navigation }) {
       const fechaGuardada = await AsyncStorage.getItem('lastSyncDate');
       if (fechaGuardada) setLastSync(fechaGuardada);
 
+      // Si hay un viaje en curso y el GPS no está corriendo (reinicio del celular, cierre
+      // forzado), se reanuda ahora: Android solo lo permite con la app abierta.
+      asegurarGPS().catch(() => {});
+
       // Sincronización inicial al abrir (única; el listener ya no dispara otra en paralelo)
       await sincronizarFondo();
     }
@@ -98,6 +103,16 @@ export default function HomeScreen({ navigation }) {
     const cancelar = iniciarAutoSync(sincronizarFondo);
     return cancelar; // Limpia el listener si la pantalla se desmonta
   }, [sincronizarFondo]);
+
+  // Mientras hay un viaje en curso, la cola (puntos GPS) se sube cada 60 s con la app abierta
+  useEffect(() => {
+    if (!viajeActivo) return undefined;
+    // Solo sube (no vuelve a bajar los maestros cada minuto)
+    const t = setInterval(() => {
+      enviarPendientes().then(async () => setPendientes(await contarPendientes())).catch(() => {});
+    }, 60000);
+    return () => clearInterval(t);
+  }, [viajeActivo]);
 
   // Al volver de un formulario, actualizar el contador de pendientes
   useEffect(() => {

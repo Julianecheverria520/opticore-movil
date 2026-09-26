@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, ScrollView, Alert, ActivityIndicator } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, ScrollView, Alert, ActivityIndicator, AppState } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome5 } from '@expo/vector-icons';
 import * as Location from 'expo-location';
@@ -7,6 +7,13 @@ import * as ImagePicker from 'expo-image-picker';
 
 import { enviarPendientes } from '../database/syncUp';
 import { obtenerViaje, viajeEnCurso, guardarFoto, borrarArchivo, finalizarViajeLocal } from '../viajes';
+import { estadoGPS, iniciarGPS, detenerGPS } from '../gps/control';
+import { estadisticasRecorrido } from '../gps/puntos';
+
+// Sin ningún punto nuevo en este tiempo (con el GPS corriendo) se muestra "esperando señal GPS"
+const MINUTOS_SIN_SENAL = 3;
+
+function hora(iso) { return iso ? String(iso).slice(11, 19) : '—'; }
 
 // Cómo se muestra cada estado de una etapa del envío
 const ETAPA = {
@@ -42,10 +49,16 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
   const [cargando, setCargando] = useState(true);
   const [enviando, setEnviando] = useState(false);
   const [finalizando, setFinalizando] = useState(false);
+  const [gps, setGps] = useState(null);
+  const [recorrido, setRecorrido] = useState(null);
 
   const recargar = useCallback(async () => {
     const v = route.params?.uuid ? await obtenerViaje(route.params.uuid) : await viajeEnCurso();
     setViaje(v);
+    if (v) {
+      setRecorrido(await estadisticasRecorrido(v.uuid));
+      setGps(await estadoGPS());
+    }
     setCargando(false);
   }, [route.params?.uuid]);
 
@@ -57,8 +70,9 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
   useEffect(() => {
     recargar();
     enviarAhora();
-    const t = setInterval(recargar, 10000); // refleja lo que la cola va subiendo
-    return () => clearInterval(t);
+    const t = setInterval(recargar, 10000); // refleja lo que la cola y el GPS van guardando
+    const sub = AppState.addEventListener('change', (s) => { if (s === 'active') recargar(); });
+    return () => { clearInterval(t); sub.remove(); };
   }, [recargar, enviarAhora]);
 
   const finalizar = async () => {
@@ -75,6 +89,7 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
             if (r.canceled || !r.assets?.length) return;
             setFinalizando(true);
             fotoFin = await guardarFoto(r.assets[0].uri, viaje.uuid, 'fin');
+            await detenerGPS(); // el recorrido termina aquí; los puntos que falten se suben antes del cierre
             const pos = await ubicacionConocida();
             await finalizarViajeLocal(viaje.uuid, { fotoFinPath: fotoFin, lat: pos?.lat, lon: pos?.lon });
             enviarPendientes().catch(() => {});
@@ -112,6 +127,18 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
   const enCurso = viaje.estado_local === 'EN_CURSO';
   const inicioConError = viaje.sync_inicio === 'error';
 
+  // Estado del GPS para el conductor
+  const minutosSinPunto = recorrido?.ultimoTs ? (Date.now() - Date.parse(recorrido.ultimoTs)) / 60000 : null;
+  let estadoGps = { texto: 'Detenido', color: '#64748b', icono: 'stop-circle' };
+  if (enCurso && gps) {
+    if (!gps.permisoPrimerPlano) estadoGps = { texto: 'Sin permiso de ubicación', color: '#ef4444', icono: 'ban' };
+    else if (!gps.ubicacionActivada) estadoGps = { texto: 'Ubicación del celular apagada', color: '#ef4444', icono: 'map-marker-alt' };
+    else if (!gps.corriendo) estadoGps = { texto: 'GPS detenido', color: '#ef4444', icono: 'exclamation-circle' };
+    else if (minutosSinPunto === null || minutosSinPunto > MINUTOS_SIN_SENAL) estadoGps = { texto: 'Esperando señal GPS', color: '#f59e0b', icono: 'satellite-dish' };
+    else estadoGps = { texto: 'Activo', color: '#10b981', icono: 'satellite-dish' };
+  }
+  const reintentarGps = async () => { await iniciarGPS(viaje.placa); recargar(); };
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
       <View style={styles.mobileHeader}>
@@ -133,11 +160,35 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
           {viaje.id_viaje_servidor ? <Text style={styles.detalle}>ID en el sistema: #{viaje.id_viaje_servidor}</Text> : null}
         </View>
 
+        <Text style={styles.subtitulo}>GPS del recorrido</Text>
+        <View style={styles.tarjetaEtapas}>
+          <View style={styles.filaEtapa}>
+            <FontAwesome5 name={estadoGps.icono} size={16} color={estadoGps.color} style={{ width: 24 }} />
+            <Text style={styles.filaEtapaTitulo}>Estado</Text>
+            <Text style={[styles.filaEtapaEstado, { color: estadoGps.color }]}>{estadoGps.texto}</Text>
+          </View>
+          <View style={styles.filaDato}><Text style={styles.datoEtiqueta}>Puntos capturados / enviados</Text><Text style={styles.datoValor}>{recorrido?.capturados ?? 0} / {recorrido?.enviados ?? 0}</Text></View>
+          <View style={styles.filaDato}><Text style={styles.datoEtiqueta}>Último punto</Text><Text style={styles.datoValor}>{hora(recorrido?.ultimoTs)}{recorrido?.ultimaPrecision != null ? ` • ±${Math.round(recorrido.ultimaPrecision)} m` : ''}</Text></View>
+          <View style={[styles.filaDato, { borderBottomWidth: 0 }]}><Text style={styles.datoEtiqueta}>Distancia aproximada</Text><Text style={styles.datoValor}>{(recorrido?.distanciaKm ?? 0).toFixed(1)} km</Text></View>
+        </View>
+        {viaje.gps_simulados > 0 ? (
+          <View style={[styles.aviso, { backgroundColor: '#fef2f2' }]}>
+            <FontAwesome5 name="user-secret" size={14} color="#b91c1c" style={{ marginRight: 8 }} />
+            <Text style={[styles.avisoTexto, { color: '#b91c1c' }]}>Se detectaron {viaje.gps_simulados} ubicaciones simuladas (app de GPS falso). Quedan registradas en el viaje.</Text>
+          </View>
+        ) : null}
+        {enCurso && gps && gps.permisoPrimerPlano && !gps.corriendo ? (
+          <TouchableOpacity style={styles.btnSecundario} onPress={reintentarGps}>
+            <Text style={styles.btnSecundarioTexto}>Reintentar GPS</Text>
+          </TouchableOpacity>
+        ) : null}
+
         <Text style={styles.subtitulo}>Estado de envío</Text>
         <View style={styles.tarjetaEtapas}>
           <FilaEtapa titulo="Inicio del viaje" estado={viaje.sync_inicio} />
           <FilaEtapa titulo="Foto de carga" estado={viaje.sync_foto_inicio} />
-          <FilaEtapa titulo="Recorrido GPS" estado="pending" nota="Próximamente" />
+          <FilaEtapa titulo="Recorrido GPS" estado={recorrido?.pendientes ? 'pending' : 'synced'}
+            nota={recorrido?.pendientes ? `${recorrido.pendientes} por enviar` : (recorrido?.capturados ? 'Al día' : 'Sin puntos aún')} />
           <FilaEtapa titulo="Foto de descarga" estado={enCurso ? 'pending' : viaje.sync_foto_fin} nota={enCurso ? 'Al finalizar' : null} />
           <FilaEtapa titulo="Cierre del viaje" estado={enCurso ? 'pending' : viaje.sync_fin} nota={enCurso ? 'Al finalizar' : null} />
         </View>
@@ -193,6 +244,9 @@ const styles = StyleSheet.create({
   filaEtapa: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderColor: '#f1f5f9' },
   filaEtapaTitulo: { flex: 1, fontSize: 15, color: '#0f172a', fontWeight: '600' },
   filaEtapaEstado: { fontSize: 13, fontWeight: '800' },
+  filaDato: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10, borderBottomWidth: 1, borderColor: '#f1f5f9' },
+  datoEtiqueta: { fontSize: 14, color: '#475569' },
+  datoValor: { fontSize: 14, color: '#0f172a', fontWeight: '800' },
   aviso: { flexDirection: 'row', alignItems: 'flex-start', backgroundColor: '#fffbeb', padding: 12, borderRadius: 8, marginBottom: 12 },
   avisoTexto: { flex: 1, color: '#92400e', fontSize: 13, fontWeight: '600' },
   btnSecundario: { backgroundColor: '#e2e8f0', padding: 15, borderRadius: 8, alignItems: 'center', marginBottom: 12 },

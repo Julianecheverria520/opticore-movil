@@ -123,6 +123,18 @@ const MIGRACIONES = [
       CREATE INDEX IF NOT EXISTS idx_puntos_envio ON puntos_gps(viaje_uuid, enviado);
     `);
   },
+  // v5 · GPS (pasos 9 y 10): contadores del recorrido y marca de ubicación simulada
+  async (db) => {
+    const cols = async (t) => (await db.getAllAsync(`PRAGMA table_info(${t})`)).map((c) => c.name);
+    const cv = await cols('viajes_locales');
+    for (const def of ['gps_descartados INTEGER DEFAULT 0', 'gps_simulados INTEGER DEFAULT 0', 'gps_ultimo_evento TEXT']) {
+      if (!cv.includes(def.split(' ')[0])) await db.execAsync(`ALTER TABLE viajes_locales ADD COLUMN ${def}`);
+    }
+    // enviado: 0 pendiente · 1 enviado · -1 rechazado por el servidor (no se reintenta)
+    if (!(await cols('puntos_gps')).includes('simulado')) {
+      await db.execAsync('ALTER TABLE puntos_gps ADD COLUMN simulado INTEGER DEFAULT 0');
+    }
+  },
 ];
 
 async function migrar(db) {

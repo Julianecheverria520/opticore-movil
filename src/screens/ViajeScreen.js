@@ -9,6 +9,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { API_URL } from '../config';
 import { getDb, parseNum } from '../database/db';
 import { enviarPendientes } from '../database/syncUp';
+import { iniciarGPS } from '../gps/control';
 import {
   preoperacionalRequerido, ordenarOrigenes, validarCantidad, capacidadEquipo,
   guardarFoto, borrarArchivo, crearViajeLocal, viajeEnCurso, uuidViaje, RADIO_CERCANOS_KM,
@@ -214,6 +215,8 @@ export default function ViajeScreen({ route, navigation }) {
         lat: pos?.lat, lon: pos?.lon, fotoInicioPath: fotoRef.current,
       });
       iniciado.current = true;
+      // El GPS arranca con la app abierta (requisito de Android para el servicio de ubicación)
+      await iniciarGPS(placa);
       enviarPendientes().catch(() => {});
       navigation.replace('ViajeEnCurso', { uuid });
     } catch (e) {

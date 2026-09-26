@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getDb } from './db';
 import { API_URL } from '../config';
 import { existeArchivo, borrarArchivo } from '../viajes';
+import { lotePendiente } from '../gps/puntos';
 
 const RUTA_PREOP = '/maestros/equipos/preoperacional/guardar';
 // E1 · El endpoint ya existía en el servidor. Requiere el backend con E5 (idempotencia
@@ -13,6 +14,7 @@ const MAX_INTENTOS = 5;
 const TIMEOUT_MS = 12000;
 const TIMEOUT_FOTO_MS = 30000;   // una foto con señal débil tarda más que un JSON
 const RUTA_VIAJES = '/movil/viajes';
+const MAX_LOTES_POR_PASADA = 10;   // hasta 2.000 puntos por pasada; el resto en la siguiente
 let enviando = false;
 
 function payloadPreop(r) {
@@ -134,8 +136,8 @@ async function procesarCola(db, { tabla, ruta, armar }, token, usuario) {
 }
 
 // ── VIAJES ────────────────────────────────────────────────────────────────────
-// Un viaje sube por etapas y en orden: inicio -> foto_inicio -> (puntos: pasos 9-10)
-// -> foto_fin -> fin. Cada etapa es idempotente en el servidor (uuid_cliente), así que
+// Un viaje sube por etapas y en orden: inicio -> foto_inicio -> puntos GPS
+// -> foto_fin -> fin (el fin solo cuando no quedan puntos). Cada etapa es idempotente en el servidor (uuid_cliente), así que
 // un reintento tras un timeout nunca duplica nada. Reglas iguales a las otras colas:
 //   · sin red / 401 -> se detiene sin tocar nada
 //   · 4xx (salvo 408/429) -> error permanente de ESA etapa
@@ -228,11 +230,36 @@ async function procesarViajes(db, token, usuario) {
       await recargar();
     }
 
-    // (pasos 9-10: aquí se suben los puntos GPS por lote)
+    // 3. PUNTOS GPS: lotes de hasta 200 ordenados por seq. Solo un 2xx los marca enviados.
+    //    El servidor ignora los que ya tenía (id_viaje, seq), así que reenviar es seguro.
+    for (let lote = 0; lote < MAX_LOTES_POR_PASADA; lote++) {
+      const puntos = await lotePendiente(v.uuid);
+      if (!puntos.length) break;
+      const ids = puntos.map((p) => p.id);
+      const marcar = (valor) => db.runAsync(`UPDATE puntos_gps SET enviado = ? WHERE id IN (${ids.map(() => '?').join(',')})`, valor, ...ids);
+      let r;
+      try {
+        r = await post(`${base}/puntos`, token, {
+          puntos: puntos.map((p) => ({ seq: p.seq, latitud: p.latitud, longitud: p.longitud, precision: p.precision, velocidad: p.velocidad, ts: p.ts_iso })),
+        });
+      } catch { return { ...res, sinRed: true }; }
+      if (r.status === 401) return { ...res, sesionExpirada: true };
+      if (r.ok) { await marcar(1); continue; }
+
+      const msg = `Puntos GPS ${r.status}: ${await detalle(r)}`;
+      if (r.status >= 400 && r.status < 500 && r.status !== 408 && r.status !== 429) {
+        // Rechazo permanente de este lote: se aparta (-1) para no bloquear el resto ni el cierre
+        await marcar(-1);
+        await db.runAsync('UPDATE viajes_locales SET ultimo_error = ? WHERE id = ?', msg, v.id);
+        continue;
+      }
+      await db.runAsync('UPDATE viajes_locales SET ultimo_error = ? WHERE id = ?', msg, v.id);
+      return { ...res, servidorNoDisponible: true };
+    }
 
     if (v.estado_local !== 'FINALIZADO') continue;
 
-    // 3. FOTO DE FIN
+    // 4. FOTO DE FIN
     if (v.sync_foto_fin === 'pending') {
       if (!existeArchivo(v.foto_fin_path)) {
         await db.runAsync("UPDATE viajes_locales SET sync_foto_fin = 'error', ultimo_error = 'Foto de fin no encontrada en el celular' WHERE id = ?", v.id);
@@ -243,7 +270,10 @@ async function procesarViajes(db, token, usuario) {
       await recargar();
     }
 
-    // 4. FIN
+    // 5. FIN: solo cuando ya no quedan puntos por subir (el recorrido llega completo antes del cierre)
+    const quedan = await db.getFirstAsync('SELECT COUNT(*) AS n FROM puntos_gps WHERE viaje_uuid = ? AND enviado = 0', v.uuid);
+    if ((quedan?.n || 0) > 0) continue;
+
     if (v.sync_fin === 'pending') {
       const e = await etapaViaje(db, v, 'sync_fin', () => post(`${base}/finalizar`, token, payloadFinViaje(v)));
       if (DETENER[e]) return { ...res, ...DETENER[e] };
