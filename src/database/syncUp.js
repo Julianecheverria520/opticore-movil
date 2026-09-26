@@ -121,7 +121,14 @@ async function procesarCola(db, { tabla, ruta, armar }, token, usuario) {
   for (const fila of filas) {
     let r;
     try { r = await post(ruta, token, armar(fila)); }
-    catch { return { ...res, sinRed: true }; }
+    catch (e) {
+      // Mismo comportamiento de antes (se detiene y reintenta después), pero ahora queda
+      // el mensaje real: antes cualquier excepción se trataba en silencio como "sin red".
+      const msg = `SIN RESPUESTA: ${e?.message || String(e)}`.slice(0, 250);
+      console.warn(`Cola ${tabla} (id ${fila.id}):`, msg);
+      try { await db.runAsync(`UPDATE ${tabla} SET ultimo_error = ? WHERE id = ?`, msg, fila.id); } catch { /* informativo */ }
+      return { ...res, sinRed: true };
+    }
 
     if (r.status === 401) return { ...res, sesionExpirada: true };
 
