@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, Suspense } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, ScrollView, Alert, ActivityIndicator, AppState, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome5 } from '@expo/vector-icons';
@@ -9,6 +9,27 @@ import { enviarPendientes } from '../database/syncUp';
 import { obtenerViaje, viajeEnCurso, guardarFoto, borrarArchivo, finalizarViajeLocal, tieneProblema, reintentarViaje, descartarViaje } from '../viajes';
 import { estadoGPS, iniciarGPS, detenerGPS } from '../gps/control';
 import { estadisticasRecorrido, PRECISION_MAXIMA_M } from '../gps/puntos';
+
+// Mapa (MapLibre): se carga solo al tocar "Ver mapa". Con import() y un límite de error,
+// un build sin el módulo nativo muestra un aviso en vez de cerrar la app.
+const MapaRecorrido = React.lazy(() => import('../components/MapaRecorrido'));
+
+class LimiteMapa extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error) { console.warn('Mapa:', error?.message || error); }
+  render() {
+    if (this.state.error) {
+      return (
+        <View style={styles.aviso}>
+          <FontAwesome5 name="map" size={14} color="#92400e" style={{ marginRight: 8 }} />
+          <Text style={styles.avisoTexto}>No se pudo abrir el mapa. Puede que esta versión de la app no lo incluya todavía.</Text>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // Con el GPS corriendo y buena señal, si no llega ningún punto nuevo en este tiempo es
 // porque el vehículo no se mueve (el GPS solo entrega puntos cada 30 m)
@@ -69,6 +90,7 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
   const [gps, setGps] = useState(null);
   const [recorrido, setRecorrido] = useState(null);
   const [problema, setProblema] = useState(false);
+  const [mapaAbierto, setMapaAbierto] = useState(false);
 
   const recargar = useCallback(async () => {
     const v = route.params?.uuid ? await obtenerViaje(route.params.uuid) : await viajeEnCurso();
@@ -233,6 +255,18 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
           <View style={styles.filaDato}><Text style={styles.datoEtiqueta}>Último punto</Text><Text style={styles.datoValor}>{hora(recorrido?.ultimoTs)}{recorrido?.ultimaPrecision != null ? ` • ±${Math.round(recorrido.ultimaPrecision)} m` : ''}</Text></View>
           <View style={[styles.filaDato, { borderBottomWidth: 0 }]}><Text style={styles.datoEtiqueta}>Distancia aproximada</Text><Text style={styles.datoValor}>{(recorrido?.distanciaKm ?? 0).toFixed(1)} km</Text></View>
         </View>
+        <TouchableOpacity style={styles.btnMapa} onPress={() => setMapaAbierto((a) => !a)}>
+          <FontAwesome5 name={mapaAbierto ? 'eye-slash' : 'map-marked-alt'} size={15} color="#1e40af" style={{ marginRight: 8 }} />
+          <Text style={styles.btnMapaTexto}>{mapaAbierto ? 'Ocultar mapa' : 'Ver mapa'}</Text>
+        </TouchableOpacity>
+        {mapaAbierto ? (
+          <LimiteMapa>
+            <Suspense fallback={<View style={styles.mapaCargando}><ActivityIndicator color="#f59e0b" /></View>}>
+              <MapaRecorrido viaje={viaje} />
+            </Suspense>
+          </LimiteMapa>
+        ) : null}
+
         {viaje.gps_simulados > 0 ? (
           <View style={[styles.aviso, { backgroundColor: '#fef2f2' }]}>
             <FontAwesome5 name="user-secret" size={14} color="#b91c1c" style={{ marginRight: 8 }} />
@@ -402,6 +436,9 @@ const styles = StyleSheet.create({
   avisoTexto: { flex: 1, color: '#92400e', fontSize: 13, fontWeight: '600' },
   btnSecundario: { backgroundColor: '#e2e8f0', padding: 15, borderRadius: 8, alignItems: 'center', marginBottom: 12 },
   btnSecundarioTexto: { color: '#0f172a', fontWeight: '900', fontSize: 15 },
+  btnMapa: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', backgroundColor: '#dbeafe', padding: 13, borderRadius: 8, marginBottom: 12 },
+  btnMapaTexto: { color: '#1e40af', fontWeight: '900', fontSize: 15 },
+  mapaCargando: { height: 340, borderRadius: 12, backgroundColor: '#e5e7eb', justifyContent: 'center', alignItems: 'center', marginBottom: 16 },
   tarjetaProblema: { backgroundColor: '#fef2f2', borderRadius: 12, padding: 14, marginBottom: 14, borderWidth: 1, borderColor: '#fecaca' },
   problemaTitulo: { color: '#b91c1c', fontWeight: '900', fontSize: 14, marginBottom: 6 },
   problemaTexto: { color: '#7f1d1d', fontSize: 13, marginBottom: 10 },

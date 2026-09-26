@@ -55,7 +55,8 @@ Migraciones **ya ejecutadas** en Supabase: `migraciones_sql/2026_09_viajes_movil
 | `8d455a1` | Guía del conductor y este archivo al día |
 | `a18c99c` | Login con `/auth/token-movil` (respaldo a `/auth/token` si 404); "Salir" revoca el token (`/auth/logout`) |
 | `fe841e3` | Token en `expo-secure-store` (`src/sesion.js`), migración desde AsyncStorage; sin módulo nativo o si falla, sigue en AsyncStorage. **Requiere build nuevo** |
-| (este commit) | Este archivo al día |
+| `e700487` | Este archivo al día |
+| (este commit) | **Mapa en Viaje en curso** (MapLibre 11.4, config plugin, nueva arquitectura): botón Ver/Ocultar mapa (se monta solo abierto), línea desde SQLite (simplificada si > 2000 puntos), refresco ≤ 10 s, origen verde / destino rojo desde `rutas`, posición = último punto o última ubicación del sistema (no enciende GPS propio), fondos OSM/Carto en `src/config.js` (`MAPA_FONDOS`), aviso "Mapa sin fondo (sin señal)". **Requiere build nuevo** |
 
 Base local del celular: SQLite `user_version` 8 (v5 GPS, v6 precisión, v7 `diag_envio`, v8 `intentos_etapa`).
 `viajes_locales.sync_status`: `pending | synced | error | descartado`; `estado_local`: `EN_CURSO | FINALIZADO | DESCARTADO`.
@@ -80,7 +81,7 @@ Base local del celular: SQLite `user_version` 8 (v5 GPS, v6 precisión, v7 `diag
 
 1. ~~Development build nuevo~~ y ~~pruebas en carro~~: **hechos el 2026-09-25** (app abierta, pantalla bloqueada, modo avión, reinicio, finalizar: todo bien). `86102E53` ya está anulado.
 2. **Prueba de noche de la foto**: anotar KB y segundos del diagnóstico.
-3. **Orden acordado (2026-09-26)**: desplegar backend `3e454c3` y `dae79b0` → development build nuevo (`POST_NOTIFICATIONS` + `expo-secure-store`) → probar en OptiCore DEV → **después** build `preview` (piloto v2, 1.1.0, ver §7) y repetir "cerrada desde recientes" y "sin todo el tiempo".
+3. **Orden acordado (2026-09-26)**: desplegar backend `3e454c3` y `dae79b0` → development build nuevo (`POST_NOTIFICATIONS` + `expo-secure-store` + MapLibre) → probar en OptiCore DEV → **después** build `preview` (piloto v2, 1.1.0, ver §7) y repetir "cerrada desde recientes" y "sin todo el tiempo".
 4. ~~Token de 7 días (3b)~~ y ~~secure-store~~: hechos (`dae79b0`, `a18c99c`, `fe841e3`). Las sesiones abiertas antes siguen con su token de 8 h hasta que venza; el siguiente login ya usa `/auth/token-movil`.
 6. **Después del piloto (mejora 8)**: distancia acumulada en vez de releer todos los puntos cada 10 s, prueba de volumen de puntos, limpieza de fotos huérfanas (con error que nunca se borran).
 7. **Paso 12 · piloto** con 1 volqueta en paralelo a la PWA, 2–3 días: comparar recorridos, batería y viajes perdidos.

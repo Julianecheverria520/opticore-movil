@@ -111,3 +111,12 @@ export async function lotePendiente(uuid, limite = LOTE_PUNTOS) {
     uuid, limite
   );
 }
+
+/** Puntos del viaje con seq > desdeSeq, en orden (el mapa los pide por tandas). */
+export async function puntosDesde(uuid, desdeSeq = 0) {
+  const db = await getDb();
+  return db.getAllAsync(
+    'SELECT seq, latitud, longitud, ts_iso FROM puntos_gps WHERE viaje_uuid = ? AND seq > ? ORDER BY seq',
+    uuid, desdeSeq
+  );
+}
