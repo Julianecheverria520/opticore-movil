@@ -108,9 +108,12 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
             if (r.canceled || !r.assets?.length) return;
             setFinalizando(true);
             fotoFin = await guardarFoto(r.assets[0].uri, viaje.uuid, 'fin', r.assets[0].width);
-            await detenerGPS(); // el recorrido termina aquí; los puntos que falten se suben antes del cierre
             const pos = await ubicacionConocida();
             await finalizarViajeLocal(viaje.uuid, { fotoFinPath: fotoFin, lat: pos?.lat, lon: pos?.lon });
+            // Primero se guarda el cierre y después se apaga el GPS: si guardar falla, el viaje
+            // sigue EN_CURSO con el GPS encendido (antes quedaba en curso y sin GPS).
+            // Los puntos que falten se suben antes del cierre.
+            await detenerGPS();
             enviarPendientes().catch(() => {});
             Alert.alert('✅ Viaje finalizado', 'Quedó guardado en el celular y se enviará automáticamente cuando haya señal.', [
               { text: 'OK', onPress: () => navigation.navigate('Home') },
