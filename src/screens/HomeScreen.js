@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, Alert, Modal, ActivityIndicator, ScrollView } from 'react-native';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, Alert, Modal, ActivityIndicator, ScrollView, AppState } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView, Camera } from 'expo-camera';
 import { FontAwesome5 } from '@expo/vector-icons';
@@ -101,7 +101,17 @@ export default function HomeScreen({ navigation }) {
 
     // Sube apenas el celular recupera señal
     const cancelar = iniciarAutoSync(sincronizarFondo);
-    return cancelar; // Limpia el listener si la pantalla se desmonta
+
+    // Al volver la app al frente: si el sistema mató el servicio GPS (ahorro de batería del
+    // fabricante) y hay viaje en curso, se reanuda; y se sube lo acumulado.
+    const subApp = AppState.addEventListener('change', (s) => {
+      if (s !== 'active') return;
+      asegurarGPS().catch(() => {});
+      refrescarViaje();
+      enviarPendientes().then(async () => setPendientes(await contarPendientes())).catch(() => {});
+    });
+
+    return () => { cancelar(); subApp.remove(); }; // Limpia los listeners si la pantalla se desmonta
   }, [sincronizarFondo]);
 
   // Mientras hay un viaje en curso, la cola (puntos GPS) se sube cada 60 s con la app abierta

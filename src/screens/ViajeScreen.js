@@ -215,10 +215,15 @@ export default function ViajeScreen({ route, navigation }) {
         lat: pos?.lat, lon: pos?.lon, fotoInicioPath: fotoRef.current,
       });
       iniciado.current = true;
-      // El GPS arranca con la app abierta (requisito de Android para el servicio de ubicación)
-      await iniciarGPS(placa);
+      // 1) Permiso en primer plano + GPS como servicio en primer plano. Tiene que arrancar
+      //    AHORA, con la app visible: Android no deja crearlo desde segundo plano.
+      const gps = await iniciarGPS(placa);
       enviarPendientes().catch(() => {});
-      navigation.replace('ViajeEnCurso', { uuid });
+      // 2) Si falta "Permitir todo el tiempo", pantalla propia que explica por qué y luego
+      //    el permiso del sistema. Si no lo da, el viaje sigue igual (con aviso).
+      const bg = await Location.getBackgroundPermissionsAsync().catch(() => ({ status: 'denied' }));
+      if (gps.ok && bg.status !== 'granted') navigation.replace('PermisoUbicacion', { uuid });
+      else navigation.replace('ViajeEnCurso', { uuid });
     } catch (e) {
       Alert.alert('No se pudo iniciar', e?.message || 'Error guardando el viaje en el celular.');
     } finally {

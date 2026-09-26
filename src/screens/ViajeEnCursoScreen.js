@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, ScrollView, Alert, ActivityIndicator, AppState } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, ScrollView, Alert, ActivityIndicator, AppState, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome5 } from '@expo/vector-icons';
 import * as Location from 'expo-location';
@@ -177,6 +177,24 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
             <Text style={[styles.avisoTexto, { color: '#b91c1c' }]}>Se detectaron {viaje.gps_simulados} ubicaciones simuladas (app de GPS falso). Quedan registradas en el viaje.</Text>
           </View>
         ) : null}
+        {enCurso && gps && !gps.permisoPrimerPlano ? (
+          <View style={[styles.aviso, { backgroundColor: '#fef2f2' }]}>
+            <FontAwesome5 name="ban" size={14} color="#b91c1c" style={{ marginRight: 8 }} />
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.avisoTexto, { color: '#b91c1c' }]}>Sin permiso de ubicación el recorrido no se registra. El viaje sigue, pero sin GPS.</Text>
+              <TouchableOpacity onPress={() => Linking.openSettings()}><Text style={styles.enlace}>Abrir ajustes → Permisos → Ubicación</Text></TouchableOpacity>
+            </View>
+          </View>
+        ) : null}
+        {enCurso && gps && gps.permisoPrimerPlano && !gps.permisoSegundoPlano ? (
+          <View style={styles.aviso}>
+            <FontAwesome5 name="moon" size={14} color="#92400e" style={{ marginRight: 8 }} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.avisoTexto}>Sin "Permitir todo el tiempo": con la pantalla apagada el recorrido puede quedar incompleto.</Text>
+              <TouchableOpacity onPress={() => Linking.openSettings()}><Text style={styles.enlace}>Abrir ajustes → Permisos → Ubicación → Permitir todo el tiempo</Text></TouchableOpacity>
+            </View>
+          </View>
+        ) : null}
         {enCurso && gps && gps.permisoPrimerPlano && !gps.corriendo ? (
           <TouchableOpacity style={styles.btnSecundario} onPress={reintentarGps}>
             <Text style={styles.btnSecundarioTexto}>Reintentar GPS</Text>
@@ -213,6 +231,19 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
         </TouchableOpacity>
 
         {enCurso ? (
+          <View style={styles.tarjetaBateria}>
+            <Text style={styles.bateriaTitulo}><FontAwesome5 name="battery-half" size={14} color="#1e40af" />  ¿El recorrido se corta con la pantalla apagada?</Text>
+            <Text style={styles.bateriaTexto}>Algunos celulares cierran las apps para ahorrar batería. Deja OptiCore sin restricción:</Text>
+            <Text style={styles.bateriaTexto}>• <Text style={styles.negrita}>Samsung:</Text> Batería → Sin restricciones.</Text>
+            <Text style={styles.bateriaTexto}>• <Text style={styles.negrita}>Xiaomi / Redmi:</Text> Ahorro de batería → Sin restricciones, y activa Inicio automático.</Text>
+            <Text style={styles.bateriaTexto}>• <Text style={styles.negrita}>Huawei:</Text> Batería → Inicio de aplicaciones → gestionar manualmente y activar todo.</Text>
+            <TouchableOpacity style={styles.btnBateria} onPress={() => Linking.openSettings()}>
+              <Text style={styles.btnBateriaTexto}>Abrir ajustes de la app</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
+        {enCurso ? (
           <TouchableOpacity style={[styles.btnFinalizar, finalizando && { backgroundColor: '#94a3b8' }]} onPress={finalizar} disabled={finalizando}>
             {finalizando ? <ActivityIndicator color="#fff" /> : (
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -247,6 +278,13 @@ const styles = StyleSheet.create({
   filaDato: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10, borderBottomWidth: 1, borderColor: '#f1f5f9' },
   datoEtiqueta: { fontSize: 14, color: '#475569' },
   datoValor: { fontSize: 14, color: '#0f172a', fontWeight: '800' },
+  enlace: { color: '#1d4ed8', fontWeight: '900', fontSize: 13, marginTop: 6, textDecorationLine: 'underline' },
+  negrita: { fontWeight: '900' },
+  tarjetaBateria: { backgroundColor: '#eff6ff', borderRadius: 12, padding: 14, marginBottom: 14, borderWidth: 1, borderColor: '#bfdbfe' },
+  bateriaTitulo: { color: '#1e40af', fontWeight: '900', fontSize: 14, marginBottom: 6 },
+  bateriaTexto: { color: '#1e3a8a', fontSize: 13, marginBottom: 3 },
+  btnBateria: { marginTop: 10, backgroundColor: '#1d4ed8', padding: 12, borderRadius: 8, alignItems: 'center' },
+  btnBateriaTexto: { color: '#fff', fontWeight: '900' },
   aviso: { flexDirection: 'row', alignItems: 'flex-start', backgroundColor: '#fffbeb', padding: 12, borderRadius: 8, marginBottom: 12 },
   avisoTexto: { flex: 1, color: '#92400e', fontSize: 13, fontWeight: '600' },
   btnSecundario: { backgroundColor: '#e2e8f0', padding: 15, borderRadius: 8, alignItems: 'center', marginBottom: 12 },
