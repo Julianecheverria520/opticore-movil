@@ -12,7 +12,16 @@ guardado en el celular y se envía solo cuando vuelve el internet.
    - Si el celular dice *"Por seguridad, no se permite instalar apps de esta fuente"*: toca
      **Ajustes**, activa **Permitir de esta fuente** y vuelve atrás.
    - Si ya tenías OptiCore, dirá **Actualizar**: no se pierde nada de lo guardado.
+     **Nunca desinstales** la app vieja para poner la nueva: se borraría lo que no se ha enviado.
 3. Abre OptiCore e ingresa con el **usuario y contraseña** que te dio la empresa.
+
+### Tu sesión dura 7 días
+
+- Entras una vez y la app te deja trabajar **7 días** sin volver a poner la contraseña.
+- Cuando se vence, arriba sale **SESIÓN POR RENOVAR** o la franja **Inicia sesión para enviar**.
+  Puedes seguir trabajando: todo queda guardado. Cuando puedas, tócala y pon tu usuario y contraseña.
+- **Salir** (arriba) cierra tu sesión. Si tienes registros sin enviar, la app te avisa antes:
+  se conservan en el celular.
 
 ---
 
@@ -47,14 +56,48 @@ También puedes llegar desde la app: pantalla **Viaje en curso** → **Abrir aju
 
 ---
 
-## 4. Iniciar un viaje
+## 4. Tu volqueta queda guardada
 
-1. Selecciona tu volqueta (escanea el QR o escribe la placa).
-2. Si la app lo pide, haz primero el **Preoperacional** del día.
-3. Toca **Viaje** → llena material, origen, destino, **remisión** y cantidad.
-4. Toma la **foto de la carga**.
-5. Toca **Iniciar Viaje**. Se abre la pantalla **Viaje en curso**: revisa que el *Estado* del GPS no
-   esté en rojo (ver sección 6).
+- La primera vez escanea el QR o escribe la placa y toca **Verificar el equipo**.
+- Las siguientes veces la app **abre directo en tu volqueta** (arriba dice **EQUIPO ACTUAL**).
+- Si hoy manejas otra, toca **Cambiar** y escoge la nueva.
+
+---
+
+## 5. Preoperacional
+
+1. En tu volqueta toca **Preoperacional**.
+2. Escribe el kilometraje (o las horas) y responde cada pregunta.
+3. Si algo está mal, apaga el interruptor y **escribe qué pasa** (es obligatorio).
+4. Al final toca **Guardar Reporte**.
+
+### Fallas de días anteriores (tarjeta amarilla)
+
+Si en un preoperacional anterior reportaste una falla, en el siguiente te sale en **amarillo**:
+**⚠️ FALLA PREVIA (3 días)**. El número dice hace cuántos días viene esa falla.
+Debajo ves lo que se escribió la última vez (*Reporte anterior*).
+
+Tienes que tocar uno de los dos botones:
+
+| Botón | Cuándo |
+|---|---|
+| **YA SE ARREGLÓ** (verde) | La falla ya no está. Deja de salir. |
+| **AÚN FALLA** (rojo) | Sigue igual. **Escribe cómo sigue** (obligatorio). Te volverá a salir mañana. |
+
+- Si la pregunta dice **CRÍTICO** y marcas **AÚN FALLA**, la volqueta queda en **TALLER**.
+- Si no es crítica, la volqueta sigue **ACTIVA** y la falla sigue anotada.
+- Si no tocas ninguno, la app no te deja guardar y te dice cuál falta.
+- **Funciona sin señal.** Si haces dos preoperacionales sin señal, el segundo ya sabe lo que
+  respondiste en el primero.
+
+---
+
+## 6. Iniciar un viaje
+
+1. En tu volqueta, si la app lo pide, haz primero el **Preoperacional** del día.
+2. Toca **Viaje** → llena material, origen, destino, **remisión** y cantidad.
+3. Toma la **foto de la carga**.
+4. Toca **Iniciar Viaje**. Se abre la pantalla **Viaje en curso**.
 
 Si al iniciar sale **"Tienes un viaje abierto en el sistema"**: hay un viaje tuyo sin cerrar que no
 está en este celular. Puedes iniciar de todas formas, pero **avisa a tu supervisor** para que lo
@@ -65,20 +108,53 @@ deslizándola desde "apps recientes".
 
 ---
 
-## 5. Finalizar el viaje
+## 7. Pantalla "Viaje en curso"
+
+La pantalla muestra **el mapa completo** con tu recorrido:
+
+- **Punto verde** = origen. **Punto rojo** = destino. **Línea** = por donde has ido.
+- **Franja de arriba**: placa, material, ruta, estado del GPS y del envío.
+- **Botones a la derecha del mapa** (grandes, se pueden tocar con guantes):
+  - **Luna / sol**: cambia el mapa a oscuro o claro.
+  - **Flecha**: vuelve a centrar el mapa en tu volqueta.
+- Sin señal el mapa puede salir **gris** (*"Mapa sin fondo (sin señal)"*): es normal.
+  El recorrido **sí se sigue guardando**.
+
+### Panel de abajo
+
+- Abajo hay un **panel** con dos botones: **Preoperacional / Novedad** y **Finalizar viaje**.
+- **Desliza el panel hacia arriba** para ver todos los detalles (estado del GPS, fotos, envío).
+- **Deslízalo hacia abajo** para volver a ver el mapa.
+
+---
+
+## 8. Finalizar el viaje
 
 1. Abre OptiCore y toca la franja amarilla **Viaje en curso** (o el botón **Viaje en curso**).
-2. Toca **Finalizar viaje** (botón rojo, abajo).
+2. Toca **Finalizar viaje** (botón rojo, en el panel de abajo).
 3. Toma la **foto de la descarga**.
-4. Sale el mensaje **"✅ Viaje finalizado"**. Listo: el recorrido deja de registrarse.
+4. Sale el mensaje **"Viaje finalizado"**. Listo: el recorrido deja de registrarse.
 
 Solo puede haber **un viaje en curso** a la vez: finaliza uno antes de iniciar otro.
 
 ---
 
-## 6. ¿Qué significa lo que veo?
+## 9. Sin señal: qué hacer
 
-En **Viaje en curso → GPS del recorrido → Estado**:
+**Nada especial. Sigue trabajando normal.**
+
+- Preoperacional, tanqueo, iniciar viaje, fotos y finalizar: **todo funciona sin señal**.
+- Arriba verás **SIN SEÑAL** y en la pantalla principal **"• 3 por enviar"**: son registros
+  guardados que esperan señal. **No se pierden.**
+- Cuando vuelva la señal, **abre la app**: se envían solos en uno o dos minutos.
+- **No borres la app, ni sus datos, ni la desinstales** mientras haya algo "por enviar".
+- No cambies de celular con registros "por enviar".
+
+---
+
+## 10. ¿Qué significa lo que veo?
+
+En **Viaje en curso** (desliza el panel hacia arriba) → **GPS del recorrido → Estado**:
 
 | Dice | Qué hacer |
 |---|---|
@@ -90,15 +166,11 @@ En **Viaje en curso → GPS del recorrido → Estado**:
 
 ### "por enviar"
 
-En la pantalla principal puede salir **"• 3 por enviar"**. Significa que hay registros guardados en el
-celular que aún no llegan al sistema, **normalmente porque no hay señal**. No se pierden.
-
-1. **No borres la app ni sus datos**, y no desinstales OptiCore.
-2. Cuando tengas señal, abre la app: se envían solos en uno o dos minutos.
-3. Si no bajan: entra a **Viaje en curso** y toca **Enviar ahora**.
-4. Si sale la franja **"Inicia sesión para enviar"**: tócala e ingresa tu usuario y contraseña.
+1. Cuando tengas señal, abre la app: se envían solos en uno o dos minutos.
+2. Si no bajan: entra a **Viaje en curso** y toca **Enviar ahora**.
+3. Si sale la franja **"Inicia sesión para enviar"**: tócala e ingresa tu usuario y contraseña.
    Puedes seguir trabajando mientras tanto; todo queda guardado.
-5. Si después de todo eso siguen "por enviar" o ves algo en rojo: toma **captura de pantalla** de
+4. Si después de todo eso siguen "por enviar" o ves algo en rojo: toma **captura de pantalla** de
    **Viaje en curso** (incluida la parte *Diagnóstico de envío*) y envíala a tu supervisor.
 
 ### Franjas de colores en la pantalla principal
@@ -112,10 +184,12 @@ celular que aún no llegan al sistema, **normalmente porque no hay señal**. No 
 
 ---
 
-## 7. Buenas prácticas
+## 11. Buenas prácticas
 
 - Carga el celular en la volqueta: el GPS gasta batería.
 - Datos móviles encendidos (si no hay señal, la app espera; no pasa nada).
+- Si el celular tiene **Ahorro de datos**, deja a OptiCore **sin restricción de datos**
+  (Ajustes → Apps → OptiCore → Datos móviles → **Uso de datos sin restricciones**).
 - No uses apps de "GPS falso": la app las detecta y el viaje queda marcado.
 - Si reinicias el celular con un viaje abierto, **abre OptiCore** después de reiniciar para que
   el recorrido siga.
