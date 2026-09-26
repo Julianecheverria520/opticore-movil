@@ -3,6 +3,7 @@ import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Switch
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome5 } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { leerToken } from '../sesion';
 import * as Location from 'expo-location';
 
 import { API_URL } from '../config';
@@ -51,7 +52,7 @@ export default function CombustibleScreen({ route, navigation }) {
 
       // 2. ACTUALIZACIÓN ONLINE. R4 · máximo 5 s con señal débil.
       try {
-        const token = await AsyncStorage.getItem('userToken');
+        const token = await leerToken();
         const resVal = await fetchConTimeout(`${API_URL}/maestros/equipos/preoperacional/validar/${encodeURIComponent(placaLimpia)}`, {
           headers: { 'Authorization': `Bearer ${token}` }
         }, 5000);

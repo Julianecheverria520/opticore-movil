@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView, Camera } from 'expo-camera';
 import { FontAwesome5 } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { borrarToken, guardarToken, leerToken } from '../sesion';
 import * as Updates from 'expo-updates';
 
 import LoginScreen from './LoginScreen';
@@ -65,7 +66,7 @@ export default function HomeScreen({ navigation }) {
         return;
       }
 
-      const token = await AsyncStorage.getItem('userToken');
+      const token = await leerToken();
       const exito = await sincronizarDatosMaestros(token, API_URL); // 2. Baja
 
       if (exito || ultimoMotivoSync === 'vacio') {
@@ -145,7 +146,7 @@ export default function HomeScreen({ navigation }) {
 
   // Re-login desde el aviso de sesión vencida: guarda el token nuevo y reintenta el envío
   const reloginExitoso = async (token, username) => {
-    await AsyncStorage.setItem('userToken', token);
+    await guardarToken(token);
     if (username) await AsyncStorage.setItem('userName', username.trim());
     setPedirLogin(false);
     setEstadoRed('ok');
@@ -162,11 +163,11 @@ export default function HomeScreen({ navigation }) {
         {
           text: 'Salir', style: 'destructive', onPress: async () => {
             // El token de la app dura días: se revoca en el servidor si hay señal (sin esperar más de 5 s)
-            const token = await AsyncStorage.getItem('userToken');
+            const token = await leerToken();
             if (token) {
               await fetchConTimeout(`${API_URL}/auth/logout`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }, 5000).catch(() => {});
             }
-            await AsyncStorage.removeItem('userToken');
+            await borrarToken();
             Updates.reloadAsync();
           },
         },

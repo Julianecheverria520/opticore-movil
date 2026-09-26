@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Modal, FlatList, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome5 } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { leerToken } from '../sesion';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
 
@@ -107,7 +107,7 @@ export default function ViajeScreen({ route, navigation }) {
       }
 
       // 2. Preoperacional del día (decisión 1)
-      const token = await AsyncStorage.getItem('userToken');
+      const token = await leerToken();
       const preop = await preoperacionalRequerido(placa, { token, apiUrl: API_URL });
       if (!activo) return;
       // En paralelo, sin esperar: ¿hay viajes abiertos en el servidor que este celular no tiene?

@@ -3,6 +3,7 @@ import { View, ActivityIndicator, Alert, StyleSheet, Text, TouchableOpacity } fr
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { guardarToken, leerToken } from './src/sesion';
 import { FontAwesome5 } from '@expo/vector-icons'; // E4 · faltaba: la pantalla de error se caía
 
 // Pantallas
@@ -37,7 +38,7 @@ export default function App() {
 
       // 2. Auto-login: si hay token guardado se entra aunque esté vencido o no haya red.
       //    La captura funciona offline; el envío pide credenciales solo cuando haga falta.
-      const tokenGuardado = await AsyncStorage.getItem('userToken');
+      const tokenGuardado = await leerToken();
       if (tokenGuardado) setUserToken(tokenGuardado);
     } catch (error) {
       console.error('Error iniciando app:', error);
@@ -52,7 +53,7 @@ export default function App() {
   // LÓGICA DE LOGIN: Guarda quién entró y sincroniza inmediatamente
   const manejarLoginExitoso = async (token, username) => {
     try {
-      await AsyncStorage.setItem('userToken', token);
+      await guardarToken(token);
       if (username) {
         await AsyncStorage.setItem('userName', username.trim());
       }

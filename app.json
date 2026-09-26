@@ -35,6 +35,7 @@
     },
     "plugins": [
       "expo-sqlite",
+      "expo-secure-store",
       "expo-status-bar",
       [
         "expo-camera",

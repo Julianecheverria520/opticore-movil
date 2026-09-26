@@ -1,5 +1,6 @@
 import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { leerToken } from '../sesion';
 import { getDb } from './db';
 import { API_URL } from '../config';
 import { existeArchivo, borrarArchivo, subirArchivo, tamanoKB } from '../viajes';
@@ -383,7 +384,7 @@ export async function enviarPendientes(opciones = {}) {
     const red = await NetInfo.fetch();
     if (!red.isConnected || red.isInternetReachable === false) return { sinRed: true };
 
-    const token = await AsyncStorage.getItem('userToken');
+    const token = await leerToken();
     if (!token) return { sesionExpirada: true };
     const usuario = await AsyncStorage.getItem('userName');
 
