@@ -83,7 +83,7 @@ export async function estadisticasRecorrido(uuid) {
        FROM puntos_gps WHERE viaje_uuid = ?`, uuid
   );
   const ultimo = await db.getFirstAsync(
-    'SELECT ts_iso, precision FROM puntos_gps WHERE viaje_uuid = ? ORDER BY seq DESC LIMIT 1', uuid
+    'SELECT ts_iso, precision, velocidad FROM puntos_gps WHERE viaje_uuid = ? ORDER BY seq DESC LIMIT 1', uuid
   );
   // Distancia aproximada: suma de tramos entre puntos consecutivos
   const coords = await db.getAllAsync('SELECT latitud, longitud FROM puntos_gps WHERE viaje_uuid = ? ORDER BY seq', uuid);
@@ -98,6 +98,7 @@ export async function estadisticasRecorrido(uuid) {
     rechazados: c?.rechazados || 0,
     ultimoTs: ultimo?.ts_iso || null,
     ultimaPrecision: ultimo?.precision ?? null,
+    ultimaVelocidad: ultimo?.velocidad ?? null, // m/s; null si el GPS no la reportó
     distanciaKm: km,
   };
 }

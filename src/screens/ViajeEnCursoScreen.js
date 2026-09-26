@@ -13,6 +13,9 @@ import { estadisticasRecorrido, PRECISION_MAXIMA_M } from '../gps/puntos';
 // Con el GPS corriendo y buena señal, si no llega ningún punto nuevo en este tiempo es
 // porque el vehículo no se mueve (el GPS solo entrega puntos cada 30 m)
 const MINUTOS_SIN_MOVIMIENTO = 3;
+// Si el último punto ya venía casi quieto (< 5 km/h), basta con 1 minuto sin puntos
+const MINUTOS_SIN_MOVIMIENTO_LENTO = 1;
+const VELOCIDAD_QUIETO_MS = 1.4;
 
 function hora(iso) { return iso ? String(iso).slice(11, 19) : '—'; }
 
@@ -143,7 +146,10 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
 
   // Estado del GPS para el conductor
   const minutosSinPunto = recorrido?.ultimoTs ? (Date.now() - Date.parse(recorrido.ultimoTs)) / 60000 : null;
-  let estadoGps = { texto: 'Detenido', color: '#64748b', icono: 'stop-circle' };
+  const ultimoLento = recorrido?.ultimaVelocidad != null && recorrido.ultimaVelocidad < VELOCIDAD_QUIETO_MS;
+  let estadoGps = enCurso
+    ? { texto: 'Consultando…', color: '#64748b', icono: 'satellite-dish' }
+    : { texto: 'Recorrido terminado', color: '#64748b', icono: 'flag-checkered' };
   if (enCurso && gps) {
     if (!gps.permisoPrimerPlano) estadoGps = { texto: 'Sin permiso de ubicación', color: '#ef4444', icono: 'ban' };
     else if (!gps.ubicacionActivada) estadoGps = { texto: 'Ubicación del celular apagada', color: '#ef4444', icono: 'map-marker-alt' };
@@ -151,9 +157,10 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
     // "Esperando señal": nunca ha llegado un punto, o la última lectura tuvo mala precisión
     else if (minutosSinPunto === null || (viaje.gps_ultima_precision != null && viaje.gps_ultima_precision > PRECISION_MAXIMA_M)) {
       estadoGps = { texto: 'Esperando señal GPS', color: '#f59e0b', icono: 'satellite-dish' };
-    } else if (minutosSinPunto > MINUTOS_SIN_MOVIMIENTO) {
+    } else if (minutosSinPunto > MINUTOS_SIN_MOVIMIENTO || (ultimoLento && minutosSinPunto > MINUTOS_SIN_MOVIMIENTO_LENTO)) {
+      // GPS funcionando con buena señal, pero sin puntos nuevos: la volqueta está quieta
       estadoGps = { texto: 'Detenido / sin movimiento', color: '#64748b', icono: 'pause-circle' };
-    } else estadoGps = { texto: 'Activo', color: '#10b981', icono: 'satellite-dish' };
+    } else estadoGps = { texto: 'Activo · en movimiento', color: '#10b981', icono: 'satellite-dish' };
   }
   const reintentarGps = async () => { await iniciarGPS(viaje.placa); recargar(); };
 
