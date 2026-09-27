@@ -23,3 +23,17 @@ Si la prueba depende de un backend todavía no desplegado, indicar que se hace c
   `pytest api/tests`): usan la base de **PRODUCCIÓN**. Solo correr, uno por uno, los archivos de
   test que no tocan la base (p. ej. `test_token_movil.py`, `test_usuario_habilitado.py`,
   `test_fallas_preoperacional.py`), y decir antes cuáles se van a correr.
+
+## Regla: estado de la base y migraciones SQL
+
+- **NUNCA** afirmar el estado de la base de producción (columnas, tablas, datos, "el SQL ya
+  está corrido", "el relleno ya se aplicó") sin haberlo verificado. Si solo lo dijo Julián o se
+  deduce, decirlo así ("según Julián…") y pedir la verificación; no copiarlo como hecho a
+  `ESTADO_GPS.md` ni a las respuestas.
+- Todo cambio que dependa de SQL (columnas o tablas nuevas en `database.py`) debe traer una
+  **consulta de verificación de solo lectura** (p. ej. `information_schema.columns`) que Julián
+  corre en Supabase y **confirma ANTES del push** del backend. Sin esa confirmación no se da por
+  lista la migración ni se sugiere desplegar.
+- Al arrancar, el backend registra `ESQUEMA: FALTAN … COLUMNA(S)` en el log si el modelo tiene
+  columnas que la base no (`core/verificar_esquema.py`). Después de cada despliegue, revisar
+  que no aparezca.
