@@ -14,6 +14,8 @@ import { enviarPendientes, contarPendientes } from '../database/syncUp';
 import { obtenerViaje, viajeEnCurso, guardarFoto, borrarArchivo, finalizarViajeLocal, tieneProblema, reintentarViaje, descartarViaje } from '../viajes';
 import { estadoGPS, iniciarGPS, detenerGPS } from '../gps/control';
 import { estadisticasRecorrido, PRECISION_MAXIMA_M } from '../gps/puntos';
+import { getDb } from '../database/db';
+import { datosRutaPlaneada, formatoPesos, categoriaCorta } from '../rutaPlaneada';
 
 // Mapa (MapLibre) a pantalla completa. Se carga con import() dentro de un límite de error:
 // si el build no trae el módulo nativo o el mapa falla, la pantalla pasa a la vista sin
@@ -33,6 +35,7 @@ class LimiteMapa extends React.Component {
 // Panel inferior: asa + fila de botones grandes (guantes y sol)
 const ALTO_ASA = 40;
 const ALTO_BOTONES = 96;
+const ALTO_PEAJES = 30; // fila "Peajes en esta ruta" (solo si la ruta tiene línea planeada)
 
 // Con el GPS corriendo y buena señal, si no llega ningún punto nuevo en este tiempo es
 // porque el vehículo no se mueve (el GPS solo entrega puntos cada 30 m)
@@ -100,10 +103,12 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
   const [sinRed, setSinRed] = useState(false);
   const [altoFranja, setAltoFranja] = useState(110);
   const [panelAbierto, setPanelAbierto] = useState(false);
+  const [rutaPlan, setRutaPlan] = useState(null); // { peajes, categoria, resumen } · resumen null = sin línea
   const enfocada = useIsFocused(); // el mapa no refresca con otra pantalla encima
   const insets = useSafeAreaInsets();
   const { height: altoVentana } = useWindowDimensions();
-  const panelMin = ALTO_ASA + ALTO_BOTONES + insets.bottom;
+  const conPeajes = !!rutaPlan?.resumen;
+  const panelMin = ALTO_ASA + (conPeajes ? ALTO_PEAJES : 0) + ALTO_BOTONES + insets.bottom;
   const altoPanel = Math.max(panelMin + 120, Math.round(altoVentana * 0.88));
   const cerrado = altoPanel - panelMin; // desplazamiento con el panel abajo
   const desplazamiento = useRef(new Animated.Value(cerrado)).current;
@@ -164,6 +169,21 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
     }
     setCargando(false);
   }, [route.params?.uuid]);
+
+  // Ruta planeada y peajes (v10): se leen una vez por viaje, de SQLite (sin señal)
+  const uuidViaje = viaje?.uuid;
+  useEffect(() => {
+    if (!uuidViaje || !viaje) return undefined;
+    let vivo = true;
+    (async () => {
+      try {
+        const info = await datosRutaPlaneada(await getDb(), viaje);
+        if (vivo) setRutaPlan(info);
+      } catch { /* sin ruta planeada: el panel queda como antes */ }
+    })();
+    return () => { vivo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uuidViaje]);
 
   const enviarAhora = useCallback(async () => {
     setEnviando(true);
@@ -303,6 +323,25 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
         <Text style={styles.detalle}>Inicio: {String(viaje.fecha_inicio_iso || '').replace('T', ' ').slice(0, 16)}</Text>
         {viaje.id_viaje_servidor ? <Text style={styles.detalle}>ID en el sistema: #{viaje.id_viaje_servidor}</Text> : null}
       </View>
+
+      {rutaPlan?.resumen?.cantidad ? (
+        <>
+          <Text style={styles.subtitulo}>Peajes en esta ruta{rutaPlan.categoria ? ` · ${categoriaCorta(rutaPlan.categoria)}` : ''}</Text>
+          <View style={styles.tarjetaEtapas}>
+            {rutaPlan.peajes.map((p) => (
+              <View key={p.id} style={styles.filaPeaje}>
+                <Text style={styles.peajeOrden}>{p.orden}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.peajeNombre}>{p.nombre}</Text>
+                  <Text style={styles.detalle}>{p.km != null ? `km ${Number(p.km).toFixed(1)}` : ''}{p.sentido ? `${p.km != null ? ' · ' : ''}${p.sentido}` : ''}</Text>
+                </View>
+                <Text style={styles.peajeValor}>{p.valor != null ? formatoPesos(p.valor) : 'sin valor'}</Text>
+              </View>
+            ))}
+            <Text style={styles.peajeTotal}>{rutaPlan.resumen.texto}</Text>
+          </View>
+        </>
+      ) : null}
 
       <Text style={styles.subtitulo}>GPS del recorrido</Text>
       <View style={styles.tarjetaEtapas}>
@@ -507,6 +546,12 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
           <View style={styles.asaBarra} />
           <Text style={styles.asaTexto}>{panelAbierto ? 'Deslizar hacia abajo para ver el mapa' : 'Deslizar hacia arriba para ver detalles'}</Text>
         </View>
+        {conPeajes ? (
+          <View style={styles.filaResumenPeajes}>
+            <FontAwesome5 name="coins" size={13} color="#b45309" style={{ marginRight: 6 }} />
+            <Text style={styles.textoResumenPeajes} numberOfLines={1}>{rutaPlan.resumen.texto}</Text>
+          </View>
+        ) : null}
         <View style={styles.botonesPanel}>
           <TouchableOpacity style={styles.btnPanelPreop} onPress={irPreoperacional}>
             <FontAwesome5 name="clipboard-check" size={20} color="#1e40af" style={{ marginRight: 8 }} />
@@ -595,6 +640,13 @@ const styles = StyleSheet.create({
   btnPanelFinalizar: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#dc2626', borderRadius: 12, paddingHorizontal: 10 },
   btnPanelFinalizarTexto: { flexShrink: 1, color: '#fff', fontWeight: '900', fontSize: 18, textAlign: 'center' },
   contenidoPanel: { paddingHorizontal: 16, paddingTop: 8 },
+  filaResumenPeajes: { height: ALTO_PEAJES, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12 },
+  textoResumenPeajes: { fontSize: 14, fontWeight: '800', color: '#92400e' },
+  filaPeaje: { flexDirection: 'row', alignItems: 'center', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  peajeOrden: { width: 24, fontSize: 13, fontWeight: '900', color: '#b45309' },
+  peajeNombre: { fontSize: 14, fontWeight: '800', color: '#0f172a' },
+  peajeValor: { fontSize: 14, fontWeight: '900', color: '#b45309', marginLeft: 8 },
+  peajeTotal: { fontSize: 13, fontWeight: '800', color: '#92400e', marginTop: 8 },
   tarjetaProblema: { backgroundColor: '#fef2f2', borderRadius: 12, padding: 14, marginBottom: 14, borderWidth: 1, borderColor: '#fecaca' },
   problemaTitulo: { color: '#b91c1c', fontWeight: '900', fontSize: 14, marginBottom: 6 },
   problemaTexto: { color: '#7f1d1d', fontSize: 13, marginBottom: 10 },

@@ -1,6 +1,7 @@
 // src/components/MapaRecorrido.js · mapa del viaje a pantalla completa (MapLibre)
-// Solo LEE: los puntos de SQLite (funciona sin señal), la ruta de los maestros y la última
-// ubicación conocida del sistema. No arranca GPS propio ni toca la tarea 'opticore-gps'
+// Solo LEE: los puntos de SQLite (funciona sin señal), la ruta de los maestros (con su ruta
+// planeada punteada y los peajes, si el servidor la calculó) y la última ubicación conocida del
+// sistema. No arranca GPS propio ni toca la tarea 'opticore-gps'
 // ni la cola de envío.
 // Batería: refresca como máximo cada 10 s y SOLO con la app al frente y la pantalla del
 // viaje visible (prop `activo`); con la pantalla apagada o en segundo plano no hace nada.
@@ -9,12 +10,13 @@ import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, AppState, 
 import NetInfo from '@react-native-community/netinfo';
 import * as Location from 'expo-location';
 import { FontAwesome5 } from '@expo/vector-icons';
-import { Map, Camera, GeoJSONSource, Layer } from '@maplibre/maplibre-react-native';
+import { Map, Camera, GeoJSONSource, Layer, Marker } from '@maplibre/maplibre-react-native';
 
 import { MAPA_FONDOS } from '../config';
 import { getDb } from '../database/db';
 import { puntosDesde } from '../gps/puntos';
 import { simplificarLinea } from '../gps/simplificar';
+import { datosRutaPlaneada, formatoPesos } from '../rutaPlaneada';
 
 const REFRESCO_MS = 10000;       // como máximo cada 10 s
 const MAX_PUNTOS_LINEA = 2000;   // más que esto se simplifica (solo el dibujo)
@@ -33,15 +35,18 @@ function estiloFondo(tema) {
   };
 }
 
+const RUTA_VACIA = { origen: null, destino: null, planeada: [], peajes: [] };
+
 async function rutaDelViaje(viaje) {
   const db = await getDb();
-  const r = viaje.ruta_id != null
-    ? await db.getFirstAsync('SELECT * FROM rutas WHERE id = ?', viaje.ruta_id)
-    : await db.getFirstAsync('SELECT * FROM rutas WHERE origen = ? AND destino = ? LIMIT 1', viaje.origen, viaje.destino);
+  // Ruta planeada y peajes (v10): vacíos si la ruta no tiene geometría → mapa como antes
+  const { ruta: r, linea, peajes } = await datosRutaPlaneada(db, viaje);
   const ok = (a, b) => Number.isFinite(Number(a)) && Number.isFinite(Number(b)) && !(Number(a) === 0 && Number(b) === 0);
   return {
     origen: r && ok(r.origen_lat, r.origen_lon) ? [Number(r.origen_lon), Number(r.origen_lat)] : null,
     destino: r && ok(r.destino_lat, r.destino_lon) ? [Number(r.destino_lon), Number(r.destino_lat)] : null,
+    planeada: linea,
+    peajes,
   };
 }
 
@@ -81,7 +86,7 @@ export default function MapaRecorrido({ viaje, activo = true, margenSup = 0, mar
   const linea = useRef([]);          // [[lon, lat], ...] acumulado
   const ultimoSeq = useRef(0);
   const ultimoTsPunto = useRef(0);
-  const ruta = useRef({ origen: null, destino: null });
+  const ruta = useRef(RUTA_VACIA);
   const posicion = useRef(null);
   const vista = useRef(null);
   const seqCentrado = useRef(0);     // último punto al que ya se recentró
@@ -124,10 +129,11 @@ export default function MapaRecorrido({ viaje, activo = true, margenSup = 0, mar
   useEffect(() => {
     let vivo = true;
     (async () => {
-      ruta.current = await rutaDelViaje(viajeRef.current).catch(() => ({ origen: null, destino: null }));
+      ruta.current = await rutaDelViaje(viajeRef.current).catch(() => RUTA_VACIA);
       await cargar();
       if (!vivo) return;
-      const todo = [...linea.current, ruta.current.origen, ruta.current.destino, posicion.current].filter(Boolean);
+      // Al abrir se encuadra todo: recorrido, ruta planeada, origen, destino y posición
+      const todo = [...linea.current, ...ruta.current.planeada, ruta.current.origen, ruta.current.destino, posicion.current].filter(Boolean);
       vista.current = vistaInicial(todo, padding);
       seqCentrado.current = ultimoSeq.current; // al abrir se ve todo el recorrido
       setListo(true);
@@ -182,7 +188,32 @@ export default function MapaRecorrido({ viaje, activo = true, margenSup = 0, mar
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [version]);
 
+  // Ruta planeada: no cambia durante el viaje (se lee una vez)
+  const datosPlaneada = useMemo(() => ({
+    type: 'FeatureCollection',
+    features: ruta.current.planeada.length >= 2
+      ? [{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: ruta.current.planeada } }]
+      : [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [listo]);
+
+  // Peajes como vistas de React: el estilo del mapa no trae fuentes (glyphs) y sin señal no se
+  // podrían bajar, así que una capa de texto de MapLibre no mostraría los nombres.
+  const marcasPeajes = useMemo(() => ruta.current.peajes.map((p) => (
+    <Marker key={`peaje-${p.id}`} id={`peaje-${p.id}`} lngLat={[p.lon, p.lat]} anchor="bottom">
+      <View style={styles.peaje} pointerEvents="none">
+        <View style={styles.peajeRotulo}>
+          <Text style={styles.peajeNombre} numberOfLines={1}>{p.nombre}</Text>
+          {p.valor != null ? <Text style={styles.peajeValor}>{formatoPesos(p.valor)}</Text> : null}
+        </View>
+        <View style={styles.peajeIcono}><FontAwesome5 name="coins" size={12} color="#fff" /></View>
+      </View>
+    </Marker>
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  )), [listo]);
+
   const estilo = useMemo(() => estiloFondo(tema), [tema]);
+  const hayPlaneada = ruta.current.planeada.length >= 2;
 
   if (!listo) {
     return <View style={[StyleSheet.absoluteFill, styles.centro]}><ActivityIndicator color="#f59e0b" size="large" /></View>;
@@ -207,6 +238,11 @@ export default function MapaRecorrido({ viaje, activo = true, margenSup = 0, mar
         onDidFinishLoadingMap={() => setFalloFondo(false)}
       >
         <Camera ref={camara} initialViewState={vista.current} />
+        {/* Ruta planeada: punteada violeta, DEBAJO del recorrido real (va antes en el orden) */}
+        <GeoJSONSource id="planeada" data={datosPlaneada}>
+          <Layer id="planeada-linea" type="line" layout={{ 'line-cap': 'butt', 'line-join': 'round' }}
+            paint={{ 'line-color': '#7c3aed', 'line-width': 4, 'line-opacity': 0.85, 'line-dasharray': [2, 1.5] }} />
+        </GeoJSONSource>
         <GeoJSONSource id="recorrido" data={datosLinea}>
           <Layer id="recorrido-borde" type="line" layout={{ 'line-cap': 'round', 'line-join': 'round' }}
             paint={{ 'line-color': '#ffffff', 'line-width': 8, 'line-opacity': 0.8 }} />
@@ -221,6 +257,7 @@ export default function MapaRecorrido({ viaje, activo = true, margenSup = 0, mar
             'circle-stroke-width': 3,
           }} />
         </GeoJSONSource>
+        {marcasPeajes}
       </Map>
 
       {/* Avisos, centrados bajo la franja superior */}
@@ -243,6 +280,9 @@ export default function MapaRecorrido({ viaje, activo = true, margenSup = 0, mar
 
       <View style={[styles.leyenda, { bottom: margenInf + 8 }]} pointerEvents="none">
         <Text style={styles.leyendaTexto}><Text style={{ color: '#16a34a' }}>●</Text> Origen  <Text style={{ color: '#dc2626' }}>●</Text> Destino  <Text style={{ color: '#2563eb' }}>●</Text> Actual</Text>
+        {hayPlaneada ? (
+          <Text style={styles.leyendaTexto}><Text style={{ color: '#7c3aed', fontWeight: '900' }}>- - -</Text> Ruta planeada{ruta.current.peajes.length ? '  ' : ''}{ruta.current.peajes.length ? <Text style={{ color: '#b45309' }}>● Peaje</Text> : null}</Text>
+        ) : null}
       </View>
     </View>
   );
@@ -257,4 +297,9 @@ const styles = StyleSheet.create({
   btnControlActivo: { backgroundColor: '#1d4ed8' },
   leyenda: { position: 'absolute', left: 8, backgroundColor: 'rgba(255,255,255,0.92)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
   leyendaTexto: { color: '#0f172a', fontSize: 11, fontWeight: '700' },
+  peaje: { alignItems: 'center' },
+  peajeRotulo: { backgroundColor: 'rgba(255,255,255,0.95)', borderRadius: 8, borderWidth: 1, borderColor: '#f59e0b', paddingHorizontal: 6, paddingVertical: 2, maxWidth: 150, alignItems: 'center', marginBottom: 2 },
+  peajeNombre: { color: '#0f172a', fontSize: 10, fontWeight: '800' },
+  peajeValor: { color: '#b45309', fontSize: 11, fontWeight: '900' },
+  peajeIcono: { width: 24, height: 24, borderRadius: 12, backgroundColor: '#d97706', borderWidth: 2, borderColor: '#fff', alignItems: 'center', justifyContent: 'center' },
 });

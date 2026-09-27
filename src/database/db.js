@@ -164,6 +164,21 @@ const MIGRACIONES = [
       );
     `);
   },
+  // v10 · ruta planeada y peajes (src/rutaPlaneada.js): polyline de la ruta óptima por ruta,
+  //        peajes sobre ella con valores por categoría, y la categoría de peaje del equipo.
+  async (db) => {
+    const cr = (await db.getAllAsync('PRAGMA table_info(rutas)')).map((c) => c.name);
+    if (!cr.includes('geometria')) await db.execAsync('ALTER TABLE rutas ADD COLUMN geometria TEXT');
+    const ce = (await db.getAllAsync('PRAGMA table_info(equipos)')).map((c) => c.name);
+    if (!ce.includes('categoria_peaje')) await db.execAsync('ALTER TABLE equipos ADD COLUMN categoria_peaje TEXT');
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS peajes_ruta (
+        ruta_id INTEGER NOT NULL, peaje_id INTEGER NOT NULL, orden INTEGER, nombre TEXT,
+        lat REAL, lon REAL, sentido TEXT, km REAL, valores_json TEXT,
+        PRIMARY KEY (ruta_id, peaje_id)
+      );
+    `);
+  },
 ];
 
 async function migrar(db) {

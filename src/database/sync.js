@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getDb } from './db';
 import { fetchConTimeout, esErrorDeRed } from '../red';
 import { guardarFallasDescargadas } from '../fallas';
+import { guardarPeajesRutas } from '../rutaPlaneada';
 
 // 'ok' | 'vacio' | 'sesion' | 'sin_red' | 'error'
 export let ultimoMotivoSync = null;
@@ -14,6 +15,9 @@ let enCurso = null;
  * equipo, fecha del último preoperacional y si la empresa usa preoperacional.
  * (Antes pedía /maestros/equipos/ y /maestros/categorias/, que no existen en el
  * servidor: la bajada fallaba siempre con 404.)
+ *
+ * v10 · ruta planeada (geometria) y peajes de cada ruta, y categoria_peaje de cada equipo
+ * (src/rutaPlaneada.js). Un servidor que no las manda deja la ruta sin línea: mapa como antes.
  *
  * v9 · fallas abiertas del preoperacional por equipo (src/fallas.js). Un servidor
  * viejo no las manda: la tabla local no se toca y la app funciona como antes.
@@ -98,8 +102,8 @@ async function bajar(token, API_URL) {
         const st = await tx.prepareAsync(
           `INSERT OR REPLACE INTO equipos (id, placa, tipo, estado, ultimo_odometro, ultimo_horometro,
              tiene_horometro, tiene_odometro, tipo_activo_id, capacidad_tanque_gal, meta_rendimiento,
-             requiere_cantidad, capacidad_m3, capacidad_ton, ultimo_preop_fecha)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+             requiere_cantidad, capacidad_m3, capacidad_ton, ultimo_preop_fecha, categoria_peaje)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         );
         try {
           for (const eq of eqArray) {
@@ -117,7 +121,8 @@ async function bajar(token, API_URL) {
               eq.id, placa, eq.tipo || 'VEHICULO', estado, odo, horo, tieneHoro, tieneOdo,
               eq.tipo_activo_id ?? null, eq.capacidad_tanque_gal ?? null, eq.meta_rendimiento ?? null,
               eq.requiere_cantidad == null ? null : (eq.requiere_cantidad ? 1 : 0),
-              eq.capacidad_m3 ?? null, eq.capacidad_ton ?? null, eq.ultimo_preop_fecha ?? null
+              eq.capacidad_m3 ?? null, eq.capacidad_ton ?? null, eq.ultimo_preop_fecha ?? null,
+              eq.categoria_peaje ?? null
             );
           }
         } finally { await st.finalizeAsync(); }
@@ -138,16 +143,19 @@ async function bajar(token, API_URL) {
         await tx.runAsync('DELETE FROM rutas');
         const st = await tx.prepareAsync(
           `INSERT OR REPLACE INTO rutas (id, nombre, distancia_km, origen, destino,
-             origen_lat, origen_lon, destino_lat, destino_lon) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+             origen_lat, origen_lon, destino_lat, destino_lon, geometria) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         );
         try {
           for (const r of rutasArray) {
             await st.executeAsync(
               r.id, r.nombre || '', r.distancia_km ?? null, r.origen || '', r.destino || '',
-              r.origen_lat ?? null, r.origen_lon ?? null, r.destino_lat ?? null, r.destino_lon ?? null
+              r.origen_lat ?? null, r.origen_lon ?? null, r.destino_lat ?? null, r.destino_lon ?? null,
+              typeof r.geometria === 'string' ? r.geometria : null
             );
           }
         } finally { await st.finalizeAsync(); }
+        // v10 · peajes sobre cada ruta (solo si el servidor los manda)
+        await guardarPeajesRutas(tx, rutasArray);
       }
     });
 
