@@ -1,6 +1,6 @@
 # Estado: viajes con GPS en la app (opticore-movil + AppTransporte)
 
-Última actualización: 2026-09-26. opticore-movil en GitHub (`main`, ver §6). AppTransporte: **`99b4636` en producción** (incluye `3e454c3`, `dae79b0`, `ca29564` y `b44a822`).
+Última actualización: 2026-09-27. opticore-movil en GitHub (`main`, ver §6). AppTransporte: `99b4636` en producción; **`6003791` (ruta óptima y peajes) y `27bfd08` locales, sin push al 2026-09-27** (ver §3.12). SQL de rutas/peajes corrido en Supabase y relleno de la empresa 1 aplicado.
 Leer este archivo al empezar cualquier sesión sobre viajes/GPS.
 
 ---
@@ -23,6 +23,8 @@ Leer este archivo al empezar cualquier sesión sobre viajes/GPS.
 | `ca29564` | Fallas del preoperacional: `fallas.py` (fallas abiertas del último preoperacional, `desde` real recorriendo ≤ 90 días, 3 consultas por empresa; `extraer_observacion` entiende `FALLA [..]`, `Auditoría [..]` y el formato viejo de la app). `/validar` con `dias_abierta` real (+ `pregunta_id`, `desde`, `es_critica`, `ultima_obs`); `/movil/maestros` con `usa_autogestion_fallas` y `fallas_abiertas` por equipo; `/guardar`: pregunta **crítica** en falla = TALLER (lo decide el servidor) y devuelve `estado_equipo`. `api/tests/test_fallas_preoperacional.py` |
 | `b44a822` | PWA preoperacional: "AÚN FALLA" solo va a TALLER si la pregunta es crítica; días reales; `ultima_obs`; escapa `obsAnterior`; `sw.js` caché v8 |
 | `99b4636` | `CLAUDE.md`: no mostrar credenciales ni correr `test_api.py` / la suite completa (usan la base de producción) |
+| `6003791` | **Sin push.** Ruta óptima y peajes: `api/maestros/rutas_geometria.py` (OSRM demo por defecto u OpenRouteService `driving-hgv` con `RUTEO_PROVEEDOR`/`ORS_API_KEY`; timeout 6 s; máx. 1 petición/s; Douglas-Peucker 15 m; polyline precisión 5). Se calcula al crear/editar ruta (sin pedir nada si origen/destino no cambian) y en segundo plano al mover un lugar; si falla, "sin geometría" (`geometria_error`). Peajes a ≤150 m de un tramo, ordenados, en `rutas_peajes`; se recalculan al importar peajes. `/movil/maestros`: `geometria` y `peajes` por ruta, `categoria_peaje` por equipo. `equipos.categoria_peaje` (I–VII). `scripts/rellenar_geometria_rutas.py`. `leaflet-routing-machine@3.2.12`. SQL: `migraciones_sql/2026_09_rutas_geometria_peajes.sql` (**ya corrido**) |
+| `27bfd08` | **Sin push.** `borrar-empresa` borra primero `rutas_peajes` de sus rutas; importar peajes no da 500 si falla el recálculo. `api/tests/test_borrados_rutas_peajes.py` (SQLite con llaves foráneas) |
 
 Verificado en producción el 2026-09-26 (peticiones sin credenciales): `sw.js` = `opticore-v8`, `POST /auth/token-movil` existe (422 sin datos), la PWA sirve el `preoperacional_logic.js` nuevo.
 
@@ -63,6 +65,7 @@ Migraciones **ya ejecutadas** en Supabase: `migraciones_sql/2026_09_viajes_movil
 | `bef74e1` | Equipo recordado: al abrir entra directo al panel del último equipo (o el del viaje en curso); "Cambiar" y "Salir" lo olvidan |
 | `e842310` | **Viaje en curso a pantalla completa**: mapa de fondo (sigue la posición; "centrar en mí"; fondo claro/oscuro), franja superior (placa, material, ruta, estado GPS, envío) y panel inferior deslizable con "Preoperacional / Novedad" y "Finalizar viaje"; arriba del panel, todo el detalle de antes. Si el mapa no existe o falla: la pantalla anterior sin mapa. El mapa no refresca en segundo plano ni con otra pantalla encima. **Mapa y pantalla completa probados en campo** |
 | `c6e4486` | **Seguimiento de fallas del preoperacional sin señal** (`src/fallas.js`, SQLite v9 `fallas_abiertas`): tarjeta "FALLA PREVIA (N días)" con "YA SE ARREGLÓ / AÚN FALLA" (observación obligatoria), TALLER solo por pregunta crítica, textos con formato PWA, actualización local al guardar. Con servidor viejo funciona como antes. Solo JS |
+| `8ae49cf` · `02ef3b0` · `7b617f5` | **Logos 1.1.2**: launcher solo con el cubo (dentro de la zona segura), logo completo en el splash (`expo-splash-screen`, 136 dp, sobre blanco), ícono de la notificación del GPS = cubo blanco (`plugins/icono-notificacion.js` → drawable `notification_icon`); `expo-system-ui`, `expo-font`; sin `edgeToEdgeEnabled` ni `newArchEnabled`. `expo-doctor` 21/21 y `prebuild` sin avisos. **Requiere build nuevo** |
 
 Base local del celular: SQLite `user_version` 9 (v5 GPS, v6 precisión, v7 `diag_envio`, v8 `intentos_etapa`, v9 `fallas_abiertas`).
 `viajes_locales.sync_status`: `pending | synced | error | descartado`; `estado_local`: `EN_CURSO | FINALIZADO | DESCARTADO`.
@@ -94,6 +97,8 @@ Base local del celular: SQLite `user_version` 9 (v5 GPS, v6 precisión, v7 `diag
 8. ~~Usuarios inactivos~~: hecho en `3e454c3` (desplegado).
 10. **Fallas del preoperacional: listas** (backend `ca29564` + PWA `b44a822` en producción, sin SQL; app `c6e4486`, entra en el `preview` 1.1.1). DataPrueba tiene `usa_autogestion_fallas = true` pero **ninguna pregunta crítica**: marcar una (p. ej. la 3, freno) para probar TALLER; la pregunta 2 tiene el texto dañado. Después del piloto: resolver fallas desde taller/oficina con tabla propia.
 11. ~~Incidente de credenciales (2026-09-26)~~: la cadena de conexión de Supabase quedó en una conversación; **cerrado, contraseña rotada**. Reglas nuevas en `CLAUDE.md` de ambos repos.
+12. **Push y despliegue de `6003791` + `27bfd08`** (AppTransporte): sin ellos `/movil/maestros` no manda `geometria`/`peajes`. Verificar después con la sesión: `/movil/maestros` → rutas con `geometria`.
+13. **Después del piloto · borrar empresa** (`DELETE /super_admin/borrar-empresa`): borra equipos y usuarios sin borrar antes lo que depende de ellos (preoperacionales y sus detalles, historial de mantenimiento, tanqueos: `equipo_id`/`usuario_id` obligatorios). Con cualquiera de esos registros el borrado falla con 500 y no borra nada. `rutas_peajes` ya está resuelto (`27bfd08`).
 9. **Anular viajes de prueba** en el Gestor de vales. Consulta de solo lectura del 2026-09-25 (DataPrueba, sin anular):
    ids #276–280, #282, #283, #285–289 (`PRUEBA-GPS-010/030/031/032`, FINALIZADOS, marcados REVISAR), `62A17B79` (#291, remisión `8288W8W8WUW`, FINALIZADO, REVISAR), #130 (`PRUEBA 134`, mayo). #260 (conductor 79278242, RNS080, EN_PROGRESO desde 2026-09-21) **era de prueba**: anularlo con los demás. `62F053CD` y `2E148DC3` ya están anulados.
 
