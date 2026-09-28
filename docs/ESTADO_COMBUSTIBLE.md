@@ -7,7 +7,7 @@ y `/{id}/marcar-revisado` = 401 (existen). opticore-movil: rama `combustible-rev
 con el build de la fase GPS.
 Leer este archivo al empezar cualquier sesión sobre combustible.
 
-**Foto del tiquete (2026-09-28): rama `combustible-foto` de AppTransporte, SIN push y SIN desplegar** (ver §4).
+**Foto del tiquete (2026-09-28): en `main` y con push (`b331750`)**; ver §4.
 
 ---
 
@@ -118,11 +118,10 @@ verificación de esquema contra producción, que reportó `FALTAN 3 COLUMNA(S)` 
 antes del SQL). Sin escrituras.
 
 ### 4.3 Para desplegar (en orden)
-1. SQL: **según Julián (2026-09-28, sin pegar los resultados)** la primera versión no dejó las columnas (el panel local daba 500 por `foto_tiquete_ruta`) y el bucket ya existía con `public=false` pero sin límite ni tipos; lo corrigió corriendo aparte los 3 `ALTER TABLE` y un `UPDATE` del bucket. El archivo se reescribió (commit siguiente a `8dc355f`): dos bloques independientes y `ON CONFLICT DO UPDATE`. **Falta pegar (a)–(f)** para darlo por verificado.
-2. **Julián**: crear `SUPABASE_SERVICE_ROLE_KEY` en su `.env` local (para la prueba local) y en Render (antes
-   del despliegue). Sin ella la subida responde 503 y el detalle muestra "Sin foto"; el resto funciona.
-3. Prueba local con DataPrueba (empresa 1, conductor 1012392327, placa JMU965).
-4. Push de `combustible-foto` → revisar en el log de Render que no aparezca `ESQUEMA: FALTAN`.
+1. ~~SQL~~: la primera versión no dejó las columnas y el bucket (ya existía) quedó sin límites; Julián lo corrigió a mano y el archivo se reescribió (`b331750`: dos bloques, `ON CONFLICT DO UPDATE`). **Verificación pegada por Julián el 2026-09-28**: (a) 3 columnas OK; (b) `public=false`, 3145728, jpeg/png/webp; (c) 22 tanqueos, `foto_recibo_url` con 0 datos (se deja sin tocar); (d) 0 políticas; (e) `ix_registros_combustible_uuid_cliente` UNIQUE; (f) 2 con foto, solo empresa 1.
+2. ~~`SUPABASE_SERVICE_ROLE_KEY`~~: en Render y en el `.env` local, según Julián (sin ella, 503).
+3. ~~Prueba local~~ con DataPrueba: **todo OK según Julián (2026-09-28)**: la foto pendiente subió sola al reabrir la PWA; adjuntar desde la web, visor, Recomendada, Obligatoria (el motivo se quita al adjuntar), URL vencida a los 5 min; limpieza hecha (Parámetros en Opcional, tanqueos de prueba anulados).
+4. ~~Push~~: `main` = `origin/main` = `b331750` (fast-forward desde `f53be8a`, 2026-09-28). **Julián**: revisar en el log de Render que no aparezca `ESQUEMA: FALTAN`.
 5. **Julián**: Parámetros de la empresa 5 → Foto del tiquete = Recomendada; adjuntar las fotos de 16, 19, 21,
    22 y 27 desde el panel.
 
