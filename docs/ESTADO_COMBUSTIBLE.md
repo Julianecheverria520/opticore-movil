@@ -49,6 +49,8 @@ Según la misma consulta: 21 tanqueos en total, todos `DIESEL`; **ningún equipo
 
 | `a26879b` | **Panel web** (`/control-combustible`): pestaña "Por revisar" con contador; REVISAR y $/gal en la tabla del equipo; **detalle del tanqueo** (rango, motivo, corrección con observación obligatoria y confirmación, "Marcar como revisado", historial de cambios); **Parámetros** de validación; por revisar fuera de totales/KPIs/rendimiento con aviso de cantidad, **pesos** y galones excluidos; CSV con marca y motivo. Maestro de equipos: **capacidad del tanque (gal)**; historial de combustible con REVISAR y $/gal. `migraciones_sql/2026_10_combustible_revision_b.sql` |
 
+| `f53be8a` | **Anular** (`POST /{id}/anular`, admin, observación obligatoria, log; no borra; quita REVISAR; recalcula `equipos.ultimo_*` si tenía la lectura más alta; PUT de un anulado = 422). Anulados fuera de totales, KPIs, rendimiento, mediana, duplicados y "Por revisar"; visibles como ANULADO. **Posible duplicado**: otro tanqueo no anulado del mismo equipo el mismo día de Colombia → REVISAR "Posible duplicado de #N (mismo equipo, mismo día, X gal[, misma lectura: muy probable duplicado])"; al corregir solo se revisa si cambió la fecha; el script compara con los anteriores. `info-lectura.tanqueos_hoy`; `/movil/maestros` → `ultimo_tanqueo` por equipo. PWA: "¿Es un tanqueo nuevo?". Fechas de tanqueo guardadas en UTC. SQL: `2026_10_combustible_anulacion.sql`. 43 pruebas |
+
 `origin/main` = `b45f632` (verificado con git el 2026-09-28): desplegar la rama es un *fast-forward* de estos 4 commits.
 
 **SQL (verificación pegada por Julián el 2026-09-28):** (a) 5 columnas, pero `motivo_revision` =
@@ -61,6 +63,9 @@ empresa 5 y con mediana (9–15 tanqueos; el precio manual no se usó): 16 (SCO-
 19 (SGE-001, $15.000/gal, puede ser real), 21, 22 y **27 (ALQ-005, 2026-09-28, $110 por 9,783 gal)**.
 Los errores siguen entrando por la PWA mientras no se despliegue `a66d78f`. Decisión de Julián: **no aplicar
 marcas con el script**; los 5 se corrigen o marcan como revisados desde el panel.
+**SQL `_b` (Julián, 2026-09-28):** `motivo_revision` = text, 2 índices, regla de observación: OK.
+**Según Julián (2026-09-28, no verificado desde aquí):** marcó con el script 16, 19 y 27; 21 y 22 los corrige
+desde el panel local.
 `templates/app_combustible.html` no tiene ruta que lo sirva (plantilla muerta; no se tocó).
 
 ### App (opticore-movil, rama `combustible-revision`)
@@ -68,17 +73,20 @@ Nada todavía.
 
 ## 3. Pendientes (en orden)
 
-**Mínimo para desplegar backend + web:**
-1. **Julián**: correr `migraciones_sql/2026_10_combustible_revision_b.sql` y pegar sus 3 verificaciones
-   (`motivo_revision` = text; 2 índices; regla de observación).
-2. **Julián**: prueba local del panel y la PWA (lista en la respuesta del 2026-09-28).
-3. Merge `combustible-revision` → `main` y push. Después: log sin `ESQUEMA: FALTAN`; `sw.js` = `opticore-v11`.
-4. En el panel: Parámetros de cada empresa (empresa 1 casi sin datos: precio manual); corregir o marcar
-   revisados 16, 19, 21, 22 y 27 (los 5 no tienen marca: corregirlos desde "Monitor de Tanques" → equipo →
-   tanqueo, o por su id; no aparecen en "Por revisar" porque no se marcaron).
+**Para desplegar backend + web:**
+1. **Julián**: correr `migraciones_sql/2026_10_combustible_anulacion.sql` y pegar sus verificaciones (a: 4 columnas;
+   b: 0 anulados). **Hasta entonces el backend de la rama falla al leer tanqueos** (también en local).
+2. **Julián**: prueba local (panel, anular, duplicados, PWA).
+3. Fast-forward `main` → `f53be8a` y push (`origin/main` = `b45f632`). Después: log sin `ESQUEMA: FALTAN`; `sw.js` = `opticore-v11`.
+4. En producción: parámetros de cada empresa; resolver 16, 19, 21, 22, 27; correr el script en simulación para ver
+   duplicados viejos (p. ej. 20 contra 19) y decidir.
 
 **Después:**
-5. Cargar `capacidad_tanque_gal` de los equipos (hoy 0 de 22).
-6. App nativa (con el build de la fase GPS): separadores (`number-pad` en valor, `decimal-pad` + `parseDecimal`
+5. Cargar `capacidad_tanque_gal` (hoy 0 de 22 equipos).
+6. App nativa (con el build de la fase GPS), solo JS: separadores (`number-pad` en valor, `decimal-pad` + `parseDecimal`
    en galones, lectura ambigua con confirmación), "Se guardará", advertencia con el rango de `/movil/maestros`
-   (AsyncStorage), `advertencia_confirmada`. Solo JS; necesita build `preview` (no hay EAS Update).
+   (AsyncStorage), `advertencia_confirmada`, y **"Ya hay un tanqueo de este equipo hoy a las HH:MM (X gal). ¿Es uno
+   nuevo?"** con `equipos.ultimo_tanqueo` de maestros + `tanqueos_pendientes` del celular (sin señal). Build `preview`.
+7. Consecuencia a vigilar: todo segundo tanqueo del mismo equipo en el día queda por revisar (máquinas que tanquean
+   dos veces al día). Si molesta, se puede limitar a "misma lectura" o a una ventana de horas.
+8. No hay "desanular" en pantalla (a propósito); si hiciera falta, se agrega con su log.
