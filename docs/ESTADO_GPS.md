@@ -2,6 +2,7 @@
 
 Última actualización: 2026-09-27. opticore-movil en GitHub (`main`, ver §6). AppTransporte: `origin/main` en `27bfd08` (verificado con git el 2026-09-27; incluye `6003791` ruta óptima y peajes). Según Julián: SQL de rutas/peajes corrido en Supabase y relleno de la empresa 1 aplicado (no verificado desde aquí). **2026-09-27: `6003791` se desplegó antes que su SQL → la web falló con `column equipos.categoria_peaje does not exist`; ya resuelto.** Desde `core/verificar_esquema.py` el backend avisa en el log si faltan columnas.
 Leer este archivo al empezar cualquier sesión sobre viajes/GPS.
+Tanqueos (validación de precio/galón y corrección con log): trabajo aparte, en `docs/ESTADO_COMBUSTIBLE.md` (rama `combustible-revision`).
 
 ---
 
