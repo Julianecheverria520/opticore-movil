@@ -118,7 +118,7 @@ verificación de esquema contra producción, que reportó `FALTAN 3 COLUMNA(S)` 
 antes del SQL). Sin escrituras.
 
 ### 4.3 Para desplegar (en orden)
-1. **Julián**: correr `migraciones_sql/2026_10_combustible_foto.sql` en Supabase y pegar las consultas (a)–(f).
+1. SQL: **según Julián (2026-09-28, sin pegar los resultados)** la primera versión no dejó las columnas (el panel local daba 500 por `foto_tiquete_ruta`) y el bucket ya existía con `public=false` pero sin límite ni tipos; lo corrigió corriendo aparte los 3 `ALTER TABLE` y un `UPDATE` del bucket. El archivo se reescribió (commit siguiente a `8dc355f`): dos bloques independientes y `ON CONFLICT DO UPDATE`. **Falta pegar (a)–(f)** para darlo por verificado.
 2. **Julián**: crear `SUPABASE_SERVICE_ROLE_KEY` en su `.env` local (para la prueba local) y en Render (antes
    del despliegue). Sin ella la subida responde 503 y el detalle muestra "Sin foto"; el resto funciona.
 3. Prueba local con DataPrueba (empresa 1, conductor 1012392327, placa JMU965).
