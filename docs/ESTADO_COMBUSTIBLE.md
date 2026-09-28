@@ -7,6 +7,8 @@ y `/{id}/marcar-revisado` = 401 (existen). opticore-movil: rama `combustible-rev
 con el build de la fase GPS.
 Leer este archivo al empezar cualquier sesión sobre combustible.
 
+**Foto del tiquete (2026-09-28): rama `combustible-foto` de AppTransporte, SIN push y SIN desplegar** (ver §4).
+
 ---
 
 ## 0. Origen
@@ -76,6 +78,64 @@ tener los recibos. Las pruebas locales llegaron sin detallar (el mensaje traía 
 ### App (opticore-movil, rama `combustible-revision`)
 Nada todavía.
 
+## 4. Foto del tiquete (AppTransporte rama `combustible-foto`, desde `f53be8a`)
+
+Objetivo: el administrador ve la foto del tiquete junto al tanqueo y revisa o corrige sin pedirle el
+recibo al operador. Plan aprobado por Julián el 2026-09-28 con estos ajustes: por defecto **OPCIONAL**; el
+operador no reemplaza una foto ya subida (solo el admin, con log); la lectura del tiquete con IA queda para
+después (§4.4).
+
+### 4.1 Decisiones
+- **Bucket PRIVADO `tiquetes-combustible`** (Supabase Storage), 3 MB por archivo, solo JPG/PNG/WEBP, **sin
+  políticas** en `storage.objects`: solo entra el backend con la clave `service_role`
+  (`SUPABASE_SERVICE_ROLE_KEY`, variable nueva; `SUPABASE_KEY` sigue para los buckets públicos). Nada en
+  `/uploads`.
+- En la base solo la **ruta**: `{empresa}/{AAAA}/{MM}/{uuid}.{ext}` (año y mes del tanqueo, hora de Colombia).
+  Operador: `uuid` = `uuid_cliente` del tanqueo (ruta fija + upsert: un reintento reemplaza el mismo archivo).
+  Admin: `uuid` nuevo; la foto anterior **no se borra** (el log guarda las dos rutas).
+- La web ve la foto con **URL firmada de 5 min** (solo en el detalle; las listas traen `tiene_foto`).
+- **La foto no bloquea**: el tanqueo se guarda y la foto sube después. La PWA la comprime en el navegador
+  (≤1600 px, JPEG 0,7→0,5, ~350 KB).
+- `config_combustible.foto_tiquete`: `OPCIONAL` (por defecto) | `RECOMENDADA` (la PWA pide confirmar sin
+  foto) | `OBLIGATORIA` (`/guardar` sin `con_foto: true` → REVISAR "Sin foto del tiquete", sumado a los otros
+  motivos). Cuando llega la foto se quita solo ese motivo; si no quedan otros, se quita la marca (log con
+  "Llegó la foto del tiquete"). La corrección y el detalle conservan el motivo mientras siga sin foto.
+- Un tanqueo **anulado** también recibe y conserva su foto.
+- `/guardar` ya era **idempotente por `uuid_cliente`** (búsqueda + índice único); ahora la PWA lo manda (uno por
+  formulario abierto): tocar Guardar dos veces o reintentar tras un error de red no duplica.
+- `foto_recibo_url` (columna vieja, sin uso en el código) no se toca; se consulta si tiene datos (SQL (c)).
+
+### 4.2 Hecho (commits locales, sin push)
+| Commit | Qué |
+|---|---|
+| `84e60d3` | **Backend + SQL**: `core/tiquetes_storage.py`, `api/maestros/combustible_foto.py`; `POST /movil/combustible/{uuid_cliente}/foto` (operador: misma empresa y mismo usuario que registró; `ya_tiene_foto` si el admin ya puso otra; 413/415/400; 503 sin clave; 502 si Storage falla); `POST /maestros/combustible/{id}/foto` (admin, `multipart` con `observacion`, log `foto_tiquete`); `con_foto` en `/guardar`; `foto_tiquete` en `/config`, `info-lectura` y `/movil/maestros`; `tiene_foto` en `monitor-global` e `historial`; `foto` (URL firmada) en `GET /{id}`. `migraciones_sql/2026_10_combustible_foto.sql`. `api/tests/test_combustible_foto.py` (23 pruebas, SQLite + Storage falso) |
+| `8dc355f` | **Web + PWA**: `static/js/foto_tiquete.js` (compresión + cola IndexedDB `OptiCoreFotos`: 3 intentos a 2/5/15 s, luego al abrir la app y al volver la señal, 7 días). Panel: miniatura en el detalle, visor (zoom, girar, abrir), "Adjuntar/Reemplazar foto" con la observación del detalle, 📷 en Por revisar y en la tabla del equipo (y en el maestro de equipos), Parámetros → Foto del tiquete. PWA: "Tomar foto del tiquete" (cámara trasera), vista previa, Cambiar/Quitar, confirmación según la empresa, `uuid_cliente` + `con_foto`. `sw.js` `opticore-v12` |
+
+Pruebas: `test_combustible_foto.py` 23 y `test_combustible_validacion.py` 43, todas OK (2026-09-28).
+**Incidente menor (2026-09-28)**: al comprobar las rutas se importó `main.py` sin `INIT_DB=false`: corrió
+`create_all` (sin tablas nuevas: no creó nada), `crear_iniciales` (se cortó antes de sembrar) y la
+verificación de esquema contra producción, que reportó `FALTAN 3 COLUMNA(S)` (`foto_tiquete_*`, lo esperado
+antes del SQL). Sin escrituras.
+
+### 4.3 Para desplegar (en orden)
+1. **Julián**: correr `migraciones_sql/2026_10_combustible_foto.sql` en Supabase y pegar las consultas (a)–(f).
+2. **Julián**: crear `SUPABASE_SERVICE_ROLE_KEY` en su `.env` local (para la prueba local) y en Render (antes
+   del despliegue). Sin ella la subida responde 503 y el detalle muestra "Sin foto"; el resto funciona.
+3. Prueba local con DataPrueba (empresa 1, conductor 1012392327, placa JMU965).
+4. Push de `combustible-foto` → revisar en el log de Render que no aparezca `ESQUEMA: FALTAN`.
+5. **Julián**: Parámetros de la empresa 5 → Foto del tiquete = Recomendada; adjuntar las fotos de 16, 19, 21,
+   22 y 27 desde el panel.
+
+### 4.4 Después (no ahora)
+- **App nativa** (build de la fase GPS): SQLite v11 `tanqueos_pendientes.foto_uri/foto_estado/intentos_foto`;
+  `expo-image-manipulator` (1600 px, 0.7) y `UploadTask` a `/movil/combustible/{uuid}/foto` como etapa aparte,
+  después de que el tanqueo quede sincronizado, sin bloquear la cola; confirmación según `combustible.foto_tiquete`
+  de `/movil/maestros`. La ruta ya está en `auth.RUTAS_MOVIL` (prefijo `/movil/`).
+- **Leer el tiquete con IA**: al llegar la foto, un modelo de visión extrae galones, valor, precio/galón,
+  fecha, estación y placa → `ia_tiquete` (JSON con confianza). Nunca corrige solo: si difiere (galones ±2 %,
+  valor ±1 %) marca REVISAR "El tiquete dice …" y el detalle muestra digitado vs. leído con "Aplicar valores
+  del tiquete" (pasa por la corrección con log). Falta decidir proveedor y si va por empresa.
+
 ## 3. Pendientes (en orden)
 
 1. **Julián**: revisar el log del arranque en Render: que **no** aparezca `ESQUEMA: FALTAN`.
@@ -89,3 +149,4 @@ Nada todavía.
 5. Vigilar: todo segundo tanqueo del mismo equipo en el día queda por revisar. Si molesta, limitar a "misma lectura"
    o a una ventana de horas.
 6. No hay "desanular" en pantalla (a propósito); si hiciera falta, se agrega con su log.
+7. **Foto del tiquete**: ver §4.3.
