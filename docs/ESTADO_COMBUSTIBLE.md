@@ -1,7 +1,10 @@
 # Estado: calidad de datos de tanqueos (opticore-movil + AppTransporte)
 
-Última actualización: 2026-09-28. Rama `combustible-revision` en **ambos repos** (sin push, sin mezclar
-con la fase GPS; el orden frente a la Fase B 1.2.0 se decide al hacer el build `preview`).
+Última actualización: 2026-09-28. **Backend + web + PWA en producción**: AppTransporte `main` = `origin/main` =
+`f53be8a` (fast-forward desde `b45f632`, push el 2026-09-28). Verificado sin credenciales el 2026-09-28:
+`sw.js` = `opticore-v11`, `revision.js` y `combustible_numeros.js` = 200, `/referencia`, `/config`, `/{id}/anular`
+y `/{id}/marcar-revisado` = 401 (existen). opticore-movil: rama `combustible-revision` (solo docs); la app va
+con el build de la fase GPS.
 Leer este archivo al empezar cualquier sesión sobre combustible.
 
 ---
@@ -40,7 +43,7 @@ Según la misma consulta: 21 tanqueos en total, todos `DIESEL`; **ningún equipo
 
 ## 2. Hecho
 
-### Backend (AppTransporte, rama `combustible-revision`, **sin push**)
+### Backend + web + PWA (AppTransporte, en `main` y en producción desde el 2026-09-28)
 | Commit | Qué |
 |---|---|
 | `3ca4239` | Borra `api/maestros/combustible` (copia vieja sin extensión) |
@@ -64,8 +67,10 @@ empresa 5 y con mediana (9–15 tanqueos; el precio manual no se usó): 16 (SCO-
 Los errores siguen entrando por la PWA mientras no se despliegue `a66d78f`. Decisión de Julián: **no aplicar
 marcas con el script**; los 5 se corrigen o marcan como revisados desde el panel.
 **SQL `_b` (Julián, 2026-09-28):** `motivo_revision` = text, 2 índices, regla de observación: OK.
-**Según Julián (2026-09-28, no verificado desde aquí):** marcó con el script 16, 19 y 27; 21 y 22 los corrige
-desde el panel local.
+**SQL de anulación (Julián, 2026-09-28):** 4 columnas y 0 anulados: OK.
+**Según Julián (2026-09-28, no verificado desde aquí):** marcó con el script 16, 19 y 27; corrigió 21 y 22 desde
+el panel; anuló 19 (duplicado mal digitado de 20; el 20 es el correcto); 16 y 27 quedan en "Por revisar" hasta
+tener los recibos. Las pruebas locales llegaron sin detallar (el mensaje traía el marcador sin llenar).
 `templates/app_combustible.html` no tiene ruta que lo sirva (plantilla muerta; no se tocó).
 
 ### App (opticore-movil, rama `combustible-revision`)
@@ -73,20 +78,14 @@ Nada todavía.
 
 ## 3. Pendientes (en orden)
 
-**Para desplegar backend + web:**
-1. **Julián**: correr `migraciones_sql/2026_10_combustible_anulacion.sql` y pegar sus verificaciones (a: 4 columnas;
-   b: 0 anulados). **Hasta entonces el backend de la rama falla al leer tanqueos** (también en local).
-2. **Julián**: prueba local (panel, anular, duplicados, PWA).
-3. Fast-forward `main` → `f53be8a` y push (`origin/main` = `b45f632`). Después: log sin `ESQUEMA: FALTAN`; `sw.js` = `opticore-v11`.
-4. En producción: parámetros de cada empresa; resolver 16, 19, 21, 22, 27; correr el script en simulación para ver
-   duplicados viejos (p. ej. 20 contra 19) y decidir.
-
-**Después:**
-5. Cargar `capacidad_tanque_gal` (hoy 0 de 22 equipos).
-6. App nativa (con el build de la fase GPS), solo JS: separadores (`number-pad` en valor, `decimal-pad` + `parseDecimal`
+1. **Julián**: revisar el log del arranque en Render: que **no** aparezca `ESQUEMA: FALTAN`.
+2. **Julián**: en producción, Parámetros de cada empresa (empresa 1 casi sin datos: precio manual) y resolver 16 y 27
+   con los recibos.
+3. Cargar `capacidad_tanque_gal` (hoy 0 de 22 equipos).
+4. App nativa (con el build de la fase GPS), solo JS: separadores (`number-pad` en valor, `decimal-pad` + `parseDecimal`
    en galones, lectura ambigua con confirmación), "Se guardará", advertencia con el rango de `/movil/maestros`
-   (AsyncStorage), `advertencia_confirmada`, y **"Ya hay un tanqueo de este equipo hoy a las HH:MM (X gal). ¿Es uno
-   nuevo?"** con `equipos.ultimo_tanqueo` de maestros + `tanqueos_pendientes` del celular (sin señal). Build `preview`.
-7. Consecuencia a vigilar: todo segundo tanqueo del mismo equipo en el día queda por revisar (máquinas que tanquean
-   dos veces al día). Si molesta, se puede limitar a "misma lectura" o a una ventana de horas.
-8. No hay "desanular" en pantalla (a propósito); si hiciera falta, se agrega con su log.
+   (AsyncStorage), `advertencia_confirmada`, y "Ya hay un tanqueo de este equipo hoy a las HH:MM (X gal). ¿Es uno
+   nuevo?" con `equipos.ultimo_tanqueo` de maestros + `tanqueos_pendientes` del celular (sin señal). Build `preview`.
+5. Vigilar: todo segundo tanqueo del mismo equipo en el día queda por revisar. Si molesta, limitar a "misma lectura"
+   o a una ventana de horas.
+6. No hay "desanular" en pantalla (a propósito); si hiciera falta, se agrega con su log.
