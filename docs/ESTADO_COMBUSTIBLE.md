@@ -47,8 +47,20 @@ Según la misma consulta: 21 tanqueos en total, todos `DIESEL`; **ningún equipo
 | `967ce84` | `api/maestros/combustible_validacion.py` (reglas); `/guardar` marca y acepta `advertencia_confirmada`; `monitor-global` (`?solo_revision=1`), `historial`, `info-lectura` con marca, precio/galón y rango; `GET/PUT /config`, `GET /{id}`, `PUT /{id}` (log + revalida + recalcula `equipos.ultimo_*`), `POST /{id}/marcar-revisado`; `/movil/maestros` con `combustible`; `capacidad_tanque_gal` editable por API; `scripts/evaluar_tanqueos_existentes.py`; `migraciones_sql/2026_10_combustible_revision.sql`; `api/tests/test_combustible_validacion.py` (30 pruebas, SQLite en memoria) |
 | `a66d78f` | **PWA `/app`**: `static/js/combustible_numeros.js` (galones coma/punto, pesos con miles, lectura ambigua `125.430` según la anterior; `node scripts/probar_combustible_numeros.js`); campos de texto con `inputmode` (antes `type=number`); "Se guardará: X" en cada campo y precio/galón con rango; ventana de confirmación (lectura ambigua: el operador elige; precio/capacidad: "¿Los datos son correctos?"); envía `advertencia_confirmada`; la lectura va solo a odómetro u horómetro (antes a los dos); `sw.js` v11 con GET de la API *network-first* (antes *cache-first*: lectura y rango quedaban viejos) |
 
-SQL: según Julián (2026-09-28) se ejecutó sin errores; **los resultados de la verificación (a–d) y de la
-simulación no llegaron** (el mensaje traía el marcador `[pegar]`). No verificado.
+| `a26879b` | **Panel web** (`/control-combustible`): pestaña "Por revisar" con contador; REVISAR y $/gal en la tabla del equipo; **detalle del tanqueo** (rango, motivo, corrección con observación obligatoria y confirmación, "Marcar como revisado", historial de cambios); **Parámetros** de validación; por revisar fuera de totales/KPIs/rendimiento con aviso de cantidad, **pesos** y galones excluidos; CSV con marca y motivo. Maestro de equipos: **capacidad del tanque (gal)**; historial de combustible con REVISAR y $/gal. `migraciones_sql/2026_10_combustible_revision_b.sql` |
+
+`origin/main` = `b45f632` (verificado con git el 2026-09-28): desplegar la rama es un *fast-forward* de estos 4 commits.
+
+**SQL (verificación pegada por Julián el 2026-09-28):** (a) 5 columnas, pero `motivo_revision` =
+`character varying` (se esperaba TEXT; la columna ya existía, probablemente de la versión del plan con
+VARCHAR(255)) → corregir con `2026_10_combustible_revision_b.sql` **antes del despliegue**; (b) 11 columnas de
+`registros_combustible_cambios`; (c) trigger UPDATE y DELETE; (d) 0 marcados.
+
+**Simulación del script (Julián, 2026-09-28, `--precio-manual 11200`):** 21 tanqueos, 5 fuera de rango, todos
+empresa 5 y con mediana (9–15 tanqueos; el precio manual no se usó): 16 (SCO-001, $10 por 12,5 gal),
+19 (SGE-001, $15.000/gal, puede ser real), 21, 22 y **27 (ALQ-005, 2026-09-28, $110 por 9,783 gal)**.
+Los errores siguen entrando por la PWA mientras no se despliegue `a66d78f`. Decisión de Julián: **no aplicar
+marcas con el script**; los 5 se corrigen o marcan como revisados desde el panel.
 `templates/app_combustible.html` no tiene ruta que lo sirva (plantilla muerta; no se tocó).
 
 ### App (opticore-movil, rama `combustible-revision`)
@@ -56,18 +68,17 @@ Nada todavía.
 
 ## 3. Pendientes (en orden)
 
-1. **Julián**: pegar los resultados de las consultas de verificación (a–d) y de la simulación del script.
-   **Sin eso no se hace push del backend.** No aplicar marcas con el script (decisión de Julián,
-   2026-09-28): 21 y 22 se corrigen desde la pantalla nueva.
-2. Web: control de combustible (REVISAR, "Solo por revisar", detalle del tanqueo con corrección e historial,
-   parámetros, aviso con monto excluido, marcados fuera de totales/rendimiento), capacidad del tanque en el
-   maestro de equipos. (PWA: hecha en `a66d78f`.)
-3. Push del backend + web → revisar que el log no diga `ESQUEMA: FALTAN`.
-4. Configurar el precio manual de las empresas (hay pocos datos por empresa) y correr el script en simulación;
-   los ids 21 y 22 deben aparecer. Marcar con `--aplicar --ids …` los aprobados.
-5. Corregir 21 (valor $275.000) y 22 (16,702 gal) desde el detalle del tanqueo en la web.
-6. Cargar `capacidad_tanque_gal` de los equipos.
-7. App: separadores (`number-pad` en valor, `decimal-pad` + `parseDecimal` en galones, lectura ambigua con
-   confirmación), vista previa "Se guardará", advertencia con rango de `/movil/maestros`
-   (AsyncStorage), `advertencia_confirmada`. Solo JS; en los celulares del piloto necesita build `preview`
-   (no hay EAS Update configurado).
+**Mínimo para desplegar backend + web:**
+1. **Julián**: correr `migraciones_sql/2026_10_combustible_revision_b.sql` y pegar sus 3 verificaciones
+   (`motivo_revision` = text; 2 índices; regla de observación).
+2. **Julián**: prueba local del panel y la PWA (lista en la respuesta del 2026-09-28).
+3. Merge `combustible-revision` → `main` y push. Después: log sin `ESQUEMA: FALTAN`; `sw.js` = `opticore-v11`.
+4. En el panel: Parámetros de cada empresa (empresa 1 casi sin datos: precio manual); corregir o marcar
+   revisados 16, 19, 21, 22 y 27 (los 5 no tienen marca: corregirlos desde "Monitor de Tanques" → equipo →
+   tanqueo, o por su id; no aparecen en "Por revisar" porque no se marcaron).
+
+**Después:**
+5. Cargar `capacidad_tanque_gal` de los equipos (hoy 0 de 22).
+6. App nativa (con el build de la fase GPS): separadores (`number-pad` en valor, `decimal-pad` + `parseDecimal`
+   en galones, lectura ambigua con confirmación), "Se guardará", advertencia con el rango de `/movil/maestros`
+   (AsyncStorage), `advertencia_confirmada`. Solo JS; necesita build `preview` (no hay EAS Update).
