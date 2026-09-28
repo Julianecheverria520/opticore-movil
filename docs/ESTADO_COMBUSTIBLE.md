@@ -45,17 +45,23 @@ Según la misma consulta: 21 tanqueos en total, todos `DIESEL`; **ningún equipo
 |---|---|
 | `3ca4239` | Borra `api/maestros/combustible` (copia vieja sin extensión) |
 | `967ce84` | `api/maestros/combustible_validacion.py` (reglas); `/guardar` marca y acepta `advertencia_confirmada`; `monitor-global` (`?solo_revision=1`), `historial`, `info-lectura` con marca, precio/galón y rango; `GET/PUT /config`, `GET /{id}`, `PUT /{id}` (log + revalida + recalcula `equipos.ultimo_*`), `POST /{id}/marcar-revisado`; `/movil/maestros` con `combustible`; `capacidad_tanque_gal` editable por API; `scripts/evaluar_tanqueos_existentes.py`; `migraciones_sql/2026_10_combustible_revision.sql`; `api/tests/test_combustible_validacion.py` (30 pruebas, SQLite en memoria) |
+| `a66d78f` | **PWA `/app`**: `static/js/combustible_numeros.js` (galones coma/punto, pesos con miles, lectura ambigua `125.430` según la anterior; `node scripts/probar_combustible_numeros.js`); campos de texto con `inputmode` (antes `type=number`); "Se guardará: X" en cada campo y precio/galón con rango; ventana de confirmación (lectura ambigua: el operador elige; precio/capacidad: "¿Los datos son correctos?"); envía `advertencia_confirmada`; la lectura va solo a odómetro u horómetro (antes a los dos); `sw.js` v11 con GET de la API *network-first* (antes *cache-first*: lectura y rango quedaban viejos) |
+
+SQL: según Julián (2026-09-28) se ejecutó sin errores; **los resultados de la verificación (a–d) y de la
+simulación no llegaron** (el mensaje traía el marcador `[pegar]`). No verificado.
+`templates/app_combustible.html` no tiene ruta que lo sirva (plantilla muerta; no se tocó).
 
 ### App (opticore-movil, rama `combustible-revision`)
 Nada todavía.
 
 ## 3. Pendientes (en orden)
 
-1. **Julián**: correr `migraciones_sql/2026_10_combustible_revision.sql` en Supabase y confirmar las
-   consultas de verificación del final del archivo. **Sin eso no se hace push del backend.**
+1. **Julián**: pegar los resultados de las consultas de verificación (a–d) y de la simulación del script.
+   **Sin eso no se hace push del backend.** No aplicar marcas con el script (decisión de Julián,
+   2026-09-28): 21 y 22 se corrigen desde la pantalla nueva.
 2. Web: control de combustible (REVISAR, "Solo por revisar", detalle del tanqueo con corrección e historial,
    parámetros, aviso con monto excluido, marcados fuera de totales/rendimiento), capacidad del tanque en el
-   maestro de equipos, PWA con advertencia y separadores, `sw.js` v9.
+   maestro de equipos. (PWA: hecha en `a66d78f`.)
 3. Push del backend + web → revisar que el log no diga `ESQUEMA: FALTAN`.
 4. Configurar el precio manual de las empresas (hay pocos datos por empresa) y correr el script en simulación;
    los ids 21 y 22 deben aparecer. Marcar con `--aplicar --ids …` los aprobados.
