@@ -7,7 +7,7 @@ y `/{id}/marcar-revisado` = 401 (existen). opticore-movil: rama `combustible-rev
 con el build de la fase GPS.
 Leer este archivo al empezar cualquier sesión sobre combustible.
 
-**Foto del tiquete (2026-09-28): en `main` y con push (`b331750`)**; ver §4.
+**Foto del tiquete (2026-09-28): en producción (`b331750`)**. Verificado sin credenciales el 2026-09-28: `sw.js` = `opticore-v12`, `foto_tiquete.js` = 200, `app_combustible_logic.js` v5, `POST /movil/combustible/{uuid}/foto` y `POST /maestros/combustible/{id}/foto` = 401 (existen). Ver §4.
 
 ---
 
