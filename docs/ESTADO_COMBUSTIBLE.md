@@ -9,8 +9,8 @@ Leer este archivo al empezar cualquier sesión sobre combustible.
 
 **App 1.3.0 (2026-09-30)**: validaciones, foto del tiquete y tanqueo durante el viaje en la rama
 `combustible-revision` de opticore-movil (commits locales, sin push; ver §5). Backend: regla "lectura menor
-que la anterior" en la rama `combustible-lectura` de AppTransporte (`1b38684`, sin push, sin SQL): se despliega
-ANTES del push de la app.
+que la anterior" (`1b38684`, sin SQL) **en `origin/main` desde el 2026-09-30** (push de `combustible-lectura:main`,
+fast-forward desde `b331750`, sin cambiar de rama en AppTransporte).
 
 **Foto del tiquete (2026-09-28): en producción (`b331750`)**. Verificado sin credenciales el 2026-09-28: `sw.js` = `opticore-v12`, `foto_tiquete.js` = 200, `app_combustible_logic.js` v5, `POST /movil/combustible/{uuid}/foto` y `POST /maestros/combustible/{id}/foto` = 401 (existen). Ver §4.
 
@@ -176,7 +176,7 @@ Pruebas en Node (sin celular ni servidor): `probar_sqlite_v11` 23, `probar_combu
 
     node --import ./scripts/banco/registro.mjs scripts/banco/<prueba>.mjs
 
-### 5.2 Backend: lectura menor que la anterior (AppTransporte, rama `combustible-lectura`, `1b38684`, sin push)
+### 5.2 Backend: lectura menor que la anterior (AppTransporte `1b38684`, en `origin/main` desde el 2026-09-30)
 `evaluar_registro` → `motivos_lectura`: REVISAR "Lectura menor que la anterior (125.430 Km, preoperacional del
 28 sep)" o "(…, tanqueo #N del 27 sep)". La anterior = la **más reciente** antes de la fecha del tanqueo entre
 tanqueos no anulados y preoperacionales (decisión de Julián, 2026-09-30: incluir preoperacionales). La más reciente
@@ -193,7 +193,7 @@ que llega tarde no se marca). No baja `ultimo_*`. Aplica en `/guardar`, la corre
 
 ### 5.4 Para desplegar (en orden)
 1. **Julián**: ronda única de pruebas en el celular (GPS + Fase B + combustible + tanqueo durante el viaje).
-2. Push de `combustible-lectura` en AppTransporte (fast-forward a `main`, sin SQL). Después, **Julián**: revisar en el
-   log de Render que no aparezca `ESQUEMA: FALTAN`.
+2. ~~Push de `combustible-lectura`~~: hecho el 2026-09-30 (`b331750..1b38684`). Julián saltó la prueba local (bloque A);
+   la regla se verifica en producción en el paso G. **Julián**: revisar en el log de Render que no aparezca `ESQUEMA: FALTAN`.
 3. Push de `combustible-revision` de opticore-movil y build `preview` 1.3.0
    (`npx eas-cli build -p android --profile preview`), instalado encima del piloto.
