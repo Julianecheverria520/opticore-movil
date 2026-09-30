@@ -9,6 +9,22 @@ export let ultimoMotivoSync = null;
 
 let enCurso = null;
 
+const CLAVE_COMBUSTIBLE = 'configCombustible';
+
+/**
+ * v11 · Clave "combustible" de la última bajada de maestros:
+ * { rangos: { DIESEL: {...} }, tolerancia_tipo, tolerancia_valor, margen_tanque_pct, foto_tiquete, calculado }
+ * o null si nunca llegó (servidor viejo, sin señal desde la instalación): la pantalla valida como antes.
+ */
+export async function leerConfigCombustible() {
+  try {
+    const c = JSON.parse((await AsyncStorage.getItem(CLAVE_COMBUSTIBLE)) || 'null');
+    return c && typeof c === 'object' ? c : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Baja equipos, preguntas y categorías desde GET /movil/maestros.
  * v2 (viajes): también materiales, rutas con coordenadas, datos de carga de cada
@@ -21,6 +37,10 @@ let enCurso = null;
  *
  * v9 · fallas abiertas del preoperacional por equipo (src/fallas.js). Un servidor
  * viejo no las manda: la tabla local no se toca y la app funciona como antes.
+ *
+ * v11 · tanqueos: "combustible" (rangos de precio/galón, tolerancia, margen del tanque,
+ * foto del tiquete) va a AsyncStorage y "ultimo_tanqueo" de cada equipo a equipos. Un
+ * servidor que no los manda deja la validación como antes (sin rango ni "¿tanqueo nuevo?").
  *
  * E6 · Si ya hay una bajada en curso, devuelve esa misma promesa en lugar de lanzar
  * otra transacción DELETE/INSERT en paralelo.
@@ -102,8 +122,9 @@ async function bajar(token, API_URL) {
         const st = await tx.prepareAsync(
           `INSERT OR REPLACE INTO equipos (id, placa, tipo, estado, ultimo_odometro, ultimo_horometro,
              tiene_horometro, tiene_odometro, tipo_activo_id, capacidad_tanque_gal, meta_rendimiento,
-             requiere_cantidad, capacidad_m3, capacidad_ton, ultimo_preop_fecha, categoria_peaje)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+             requiere_cantidad, capacidad_m3, capacidad_ton, ultimo_preop_fecha, categoria_peaje,
+             ultimo_tanqueo_fecha, ultimo_tanqueo_galones)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         );
         try {
           for (const eq of eqArray) {
@@ -116,13 +137,15 @@ async function bajar(token, API_URL) {
             const estado = loc?.estado || eq.estado || 'ACTIVO';
             const tieneHoro = eq.tiene_horometro == null ? null : (eq.tiene_horometro ? 1 : 0);
             const tieneOdo = eq.tiene_odometro == null ? null : (eq.tiene_odometro ? 1 : 0);
+            const ut = eq.ultimo_tanqueo && typeof eq.ultimo_tanqueo === 'object' ? eq.ultimo_tanqueo : null;
 
             await st.executeAsync(
               eq.id, placa, eq.tipo || 'VEHICULO', estado, odo, horo, tieneHoro, tieneOdo,
               eq.tipo_activo_id ?? null, eq.capacidad_tanque_gal ?? null, eq.meta_rendimiento ?? null,
               eq.requiere_cantidad == null ? null : (eq.requiere_cantidad ? 1 : 0),
               eq.capacidad_m3 ?? null, eq.capacidad_ton ?? null, eq.ultimo_preop_fecha ?? null,
-              eq.categoria_peaje ?? null
+              eq.categoria_peaje ?? null,
+              typeof ut?.fecha === 'string' ? ut.fecha : null, ut?.galones ?? null
             );
           }
         } finally { await st.finalizeAsync(); }
@@ -166,6 +189,10 @@ async function bajar(token, API_URL) {
     // v9 · autogestión de fallas de la empresa (un servidor viejo no la manda: queda como estaba)
     if (typeof data?.usa_autogestion_fallas === 'boolean') {
       await AsyncStorage.setItem('usaAutogestionFallas', data.usa_autogestion_fallas ? '1' : '0');
+    }
+    // v11 · validación de tanqueos (un servidor viejo no la manda: queda la guardada, o ninguna)
+    if (data?.combustible && typeof data.combustible === 'object') {
+      await AsyncStorage.setItem(CLAVE_COMBUSTIBLE, JSON.stringify(data.combustible));
     }
 
     const a = new Date();

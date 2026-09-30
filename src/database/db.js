@@ -179,6 +179,25 @@ const MIGRACIONES = [
       );
     `);
   },
+  // v11 · calidad de datos de tanqueos (docs/ESTADO_COMBUSTIBLE.md). Solo agrega columnas.
+  //   tanqueos_pendientes: el operador confirmó la advertencia (precio/capacidad), foto del
+  //   tiquete como etapa aparte de la cola (foto_estado: sin_foto | pending | synced | error;
+  //   diag_foto = último intento {codigo, mensaje, hora}), la marca que devuelve el servidor y
+  //   el viaje en curso al registrarlo (viaje_uuid: solo local, todavía no se envía).
+  //   equipos: último tanqueo según el servidor, para "¿es un tanqueo nuevo?" sin señal.
+  async (db) => {
+    const cols = async (t) => (await db.getAllAsync(`PRAGMA table_info(${t})`)).map((c) => c.name);
+    const ct = await cols('tanqueos_pendientes');
+    for (const def of ['advertencia_confirmada INTEGER DEFAULT 0', 'foto_uri TEXT', "foto_estado TEXT DEFAULT 'sin_foto'",
+      'intentos_foto INTEGER DEFAULT 0', 'diag_foto TEXT', 'requiere_revision INTEGER DEFAULT 0', 'motivo_revision TEXT',
+      'viaje_uuid TEXT']) {
+      if (!ct.includes(def.split(' ')[0])) await db.execAsync(`ALTER TABLE tanqueos_pendientes ADD COLUMN ${def}`);
+    }
+    const ce = await cols('equipos');
+    for (const def of ['ultimo_tanqueo_fecha TEXT', 'ultimo_tanqueo_galones REAL']) {
+      if (!ce.includes(def.split(' ')[0])) await db.execAsync(`ALTER TABLE equipos ADD COLUMN ${def}`);
+    }
+  },
 ];
 
 async function migrar(db) {
