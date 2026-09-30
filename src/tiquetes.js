@@ -6,7 +6,8 @@
 // - Envío: etapa APARTE de la cola, al final y con su propio candado, solo cuando el tanqueo ya
 //   quedó enviado. Una subida lenta (hasta 120 s) nunca frena los puntos del viaje ni los tanqueos.
 //   SIN RESPUESTA → espera 5 min (salvo "Enviar ahora"); rechazo 4xx (salvo 408/429) o 5 fallas → error.
-//   "ya_tiene_foto" (el administrador ya puso otra) cuenta como enviada.
+//   "ya_tiene_foto" (el administrador ya puso otra) cuenta como enviada. Una foto con error se
+//   conserva (tanqueo y archivo) hasta que suba con "Reintentar" o se descarte a mano ('descartada').
 // - Limpieza: borra archivos de tiquetes/ sin fila en tanqueos_pendientes y que no sean la foto de
 //   un formulario abierto (con más de 1 h, por si acaso).
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -190,6 +191,17 @@ export async function reintentarFotosTiquete() {
   await db.runAsync(
     "UPDATE tanqueos_pendientes SET foto_estado = 'pending', intentos_foto = 0, diag_foto = NULL WHERE foto_estado = 'error' AND foto_uri IS NOT NULL"
   );
+}
+
+/** "Descartar" (con confirmación en Home): las fotos con error dejan de enviarse y se borran del celular. */
+export async function descartarFotosTiquete() {
+  const db = await getDb();
+  const filas = await db.getAllAsync("SELECT id, foto_uri FROM tanqueos_pendientes WHERE foto_estado = 'error'");
+  for (const f of filas) {
+    borrarArchivo(f.foto_uri);
+    await db.runAsync("UPDATE tanqueos_pendientes SET foto_estado = 'descartada' WHERE id = ?", f.id);
+  }
+  return filas.length;
 }
 
 /**

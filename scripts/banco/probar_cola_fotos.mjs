@@ -203,7 +203,14 @@ alSubir = async () => { throw new Error('timeout'); }; // la de V-pend no alcanz
 await pasada();
 chk(!(await fila('V-sin')), '14 días: se borra el tanqueo enviado sin foto');
 chk(!!(await fila('V-pend')), '14 días: NO se borra el que tiene la foto por enviar');
-chk(!(await fila('V-err')), '14 días: el de foto con error se borra (como estaba aprobado)');
+chk(!!(await fila('V-err')), '14 días: NO se borra el que tiene la foto con error');
+chk(FS.__archivos.has(`${TIQUETES}V-err.jpg`), 'la foto con error sigue en el celular (la limpieza de huérfanas la respeta)');
+chk(await T.descartarFotosTiquete() === 1 && (await fila('V-err')).foto_estado === 'descartada'
+  && !FS.__archivos.has(`${TIQUETES}V-err.jpg`), '"Descartar": foto_estado descartada y el archivo se borra');
+res = await contarPendientes();
+chk(res.fotos.errores === 0 && res.fotos.pendientes === 1, 'Home: la descartada ya no cuenta (queda la pendiente)');
+await pasada();
+chk(!(await fila('V-err')), 'descartada: la limpieza de 14 días ya la puede borrar');
 
 await limpiar();
 const hace2h = Date.now() - 2 * 3600000;

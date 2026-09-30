@@ -15,7 +15,7 @@ import { API_URL } from '../config';
 import { fetchConTimeout } from '../red';
 import { viajeEnCurso, viajesConProblema, viajesAbiertosAjenos, describirAjenos } from '../viajes';
 import { asegurarGPS } from '../gps/control';
-import { esperarFotosTiquete, reintentarFotosTiquete } from '../tiquetes';
+import { esperarFotosTiquete, reintentarFotosTiquete, descartarFotosTiquete } from '../tiquetes';
 
 // Equipo recordado: la última placa validada en este celular (se borra con "Cambiar" y "Salir")
 const CLAVE_EQUIPO = 'equipoRecordado';
@@ -314,6 +314,24 @@ export default function HomeScreen({ navigation }) {
       setEnviandoFotos(false);
     }
   };
+  const descartarFotos = () => {
+    const n = fotos?.errores || 0;
+    Alert.alert(
+      'Descartar fotos con error',
+      `${n === 1 ? 'La foto con error no se enviará' : `Las ${n} fotos con error no se enviarán`} y se borrarán del celular. `
+        + 'Los tanqueos ya están en el sistema: si hace falta, el administrador adjunta la foto desde la web.\n\nEsto no se puede deshacer.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Descartar', style: 'destructive',
+          onPress: async () => {
+            try { await descartarFotosTiquete(); } catch { /* se ve en la tarjeta */ }
+            try { setPendientes(await contarPendientes()); } catch {}
+          },
+        },
+      ]
+    );
+  };
   let diagFotos = null;
   if (fotos?.ultimo) {
     const d = fotos.ultimo;
@@ -339,6 +357,11 @@ export default function HomeScreen({ navigation }) {
         {fotos.errores > 0 ? (
           <TouchableOpacity style={[styles.btnFotos, { backgroundColor: '#b91c1c' }]} onPress={() => enviarFotos(true)} disabled={enviandoFotos}>
             {enviandoFotos ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.btnFotosTexto}>Reintentar</Text>}
+          </TouchableOpacity>
+        ) : null}
+        {fotos.errores > 0 ? (
+          <TouchableOpacity style={[styles.btnFotos, { backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#b91c1c' }]} onPress={descartarFotos} disabled={enviandoFotos}>
+            <Text style={[styles.btnFotosTexto, { color: '#b91c1c' }]}>Descartar</Text>
           </TouchableOpacity>
         ) : null}
       </View>

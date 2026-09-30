@@ -426,8 +426,9 @@ async function enviarCola(opciones) {
     if (detenida) return { sinRed: !!detenida.sinRed, servidorNoDisponible: !!detenida.servidorNoDisponible, enviados: total.enviados, errores: total.errores };
 
     for (const { tabla } of COLAS) {
-      // Un tanqueo con la foto del tiquete por enviar no se borra (la foto se asocia por su uuid)
-      const conFoto = tabla === 'tanqueos_pendientes' ? " AND COALESCE(foto_estado, 'sin_foto') <> 'pending'" : '';
+      // Un tanqueo con la foto del tiquete por enviar o con error no se borra: se conserva hasta que
+      // suba ("Reintentar") o el conductor la descarte a mano en Home (la foto se asocia por su uuid)
+      const conFoto = tabla === 'tanqueos_pendientes' ? " AND COALESCE(foto_estado, 'sin_foto') NOT IN ('pending', 'error')" : '';
       await db.runAsync(`DELETE FROM ${tabla} WHERE sync_status = 'synced' AND fecha < datetime('now','-14 days','localtime')${conFoto}`);
     }
     try { await limpiarTiquetesHuerfanos(db); } catch (e) { console.warn('Limpieza de tiquetes:', e?.message || e); }
