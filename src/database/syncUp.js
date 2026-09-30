@@ -59,9 +59,15 @@ function payloadTanqueo(r) {
   };
 }
 
+// v11 · La respuesta del tanqueo trae la marca del servidor: se guarda para mostrarla al operador
+async function revisionTanqueo(db, fila, cuerpo) {
+  await db.runAsync('UPDATE tanqueos_pendientes SET requiere_revision = ?, motivo_revision = ? WHERE id = ?',
+    cuerpo?.requiere_revision ? 1 : 0, cuerpo?.motivo_revision ?? null, fila.id);
+}
+
 const COLAS = [
   { tabla: 'reportes_pendientes', ruta: RUTA_PREOP, armar: payloadPreop },
-  { tabla: 'tanqueos_pendientes', ruta: RUTA_TANQUEO, armar: payloadTanqueo },
+  { tabla: 'tanqueos_pendientes', ruta: RUTA_TANQUEO, armar: payloadTanqueo, alOk: revisionTanqueo },
 ];
 
 async function post(ruta, token, body) {
@@ -137,7 +143,7 @@ async function detalle(res) {
   }
 }
 
-async function procesarCola(db, { tabla, ruta, armar }, token, usuario) {
+async function procesarCola(db, { tabla, ruta, armar, alOk }, token, usuario) {
   const res = { enviados: 0, errores: 0 };
   const filas = await db.getAllAsync(
     `SELECT * FROM ${tabla} WHERE sync_status = 'pending' AND (usuario IS NULL OR usuario = ?) ORDER BY id ASC`,
@@ -161,6 +167,9 @@ async function procesarCola(db, { tabla, ruta, armar }, token, usuario) {
     // 2xx incluye {"status": "duplicate"}: el servidor ya lo tenía (reenvío tras un timeout)
     if (r.ok) {
       await db.runAsync(`UPDATE ${tabla} SET sync_status = 'synced', ultimo_error = NULL WHERE id = ?`, fila.id);
+      if (alOk) {
+        try { await alOk(db, fila, await r.json()); } catch { /* respuesta sin cuerpo: ya quedó enviado */ }
+      }
       res.enviados++;
       continue;
     }

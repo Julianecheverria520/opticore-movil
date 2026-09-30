@@ -230,4 +230,43 @@ chk(enForm === `${TIQUETES}FORMULARIO.jpg` && !FS.__archivos.has('file:///cache/
 await T.soltarFotoFormulario(enForm, { borrar: true });
 chk(!FS.__archivos.has(enForm), 'salir sin guardar: la foto del formulario se borra');
 
+// ── 6. Resultado después de guardar (espera hasta ~8 s) ──────────────────────
+titulo('6. Resultado para el operador');
+const C = await src('combustible.js');
+await limpiar(); await tanqueo('R1', { conFoto: true });
+rutas = { '/combustible/guardar': () => resp(200, { status: 'success', requiere_revision: true, motivo_revision: 'Lectura menor que la anterior (1.500 Km, tanqueo #6 del 15 sep) · el operador confirmó los datos' }) };
+let e6 = await C.esperarEnvioTanqueo('R1', 3000);
+let a6 = C.resultadoTanqueo(e6.fila, e6.pasada);
+chk(e6.fila.requiere_revision === 1 && /Lectura menor/.test(e6.fila.motivo_revision), 'la marca del servidor se guarda en la fila');
+chk(a6.tipo === 'revision' && a6.titulo === 'Quedó marcado para revisión' && /El administrador lo revisará: Lectura menor/.test(a6.texto)
+  && /foto del tiquete se envía aparte/.test(a6.texto), 'aviso ámbar "Quedó marcado para revisión" con el motivo (y la foto aparte)');
+await T.esperarFotosTiquete();
+
+await limpiar(); await tanqueo('R2');
+rutas = { '/combustible/guardar': () => resp(200, { status: 'success', requiere_revision: false }) };
+e6 = await C.esperarEnvioTanqueo('R2', 3000);
+a6 = C.resultadoTanqueo(e6.fila, e6.pasada);
+chk(a6.tipo === 'ok' && a6.titulo === 'Guardado y enviado' && a6.texto === 'Tanqueo de 25,5 gal por $275.000 quedó en el sistema.', '"Guardado y enviado"');
+
+await limpiar(); await tanqueo('R3');
+globalThis.__sinRed = true;
+let t0 = Date.now();
+e6 = await C.esperarEnvioTanqueo('R3', 3000);
+globalThis.__sinRed = false;
+a6 = C.resultadoTanqueo(e6.fila, e6.pasada);
+chk(a6.tipo === 'pendiente' && a6.titulo === 'Se enviará cuando haya señal' && Date.now() - t0 < 1000, 'sin red: "Se enviará cuando haya señal" sin esperar los 8 s');
+
+await limpiar(); await tanqueo('R4');
+rutas = { '/combustible/guardar': () => new Promise((z) => setTimeout(() => z(resp(200, { status: 'success' })), 5000)) };
+t0 = Date.now();
+e6 = await C.esperarEnvioTanqueo('R4', 1500);
+chk(C.resultadoTanqueo(e6.fila, e6.pasada).tipo === 'pendiente' && Date.now() - t0 < 2500, 'servidor lento: al vencer la espera (8 s; aquí 1,5) dice que se enviará');
+await new Promise((z) => setTimeout(z, 4000)); // deja terminar esa pasada
+
+await limpiar(); await tanqueo('R5');
+rutas = { '/combustible/guardar': () => resp(404, { detail: 'Equipo no encontrado' }) };
+e6 = await C.esperarEnvioTanqueo('R5', 3000);
+a6 = C.resultadoTanqueo(e6.fila, e6.pasada);
+chk(a6.tipo === 'error' && /404: Equipo no encontrado/.test(a6.texto), 'rechazo: "El sistema no aceptó el tanqueo" con el motivo');
+
 console.log(`\n${ok} comprobaciones OK`);

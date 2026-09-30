@@ -9,10 +9,9 @@ import * as ImagePicker from 'expo-image-picker';
 
 import { API_URL } from '../config';
 import { getDb, nuevoUUID, ahoraISO, parseNum, esMaquinaria } from '../database/db';
-import { enviarPendientes } from '../database/syncUp';
 import { fetchConTimeout } from '../red';
 import { parseDecimal, parseMoneda, parseLectura, fmtPesos, fmtNum, advertenciasTanqueo } from '../combustibleNumeros';
-import { datosValidacion } from '../combustible';
+import { datosValidacion, esperarEnvioTanqueo, resultadoTanqueo } from '../combustible';
 import { guardarFotoTiquete, soltarFotoFormulario } from '../tiquetes';
 import { tamanoKB } from '../viajes';
 
@@ -25,6 +24,13 @@ import { tamanoKB } from '../viajes';
 // según la empresa es opcional, recomendada (pide confirmar sin foto) u obligatoria (sin foto queda por revisar).
 
 const COLOR_AVISO = { ok: '#065f46', warn: '#b45309', err: '#b91c1c' };
+// Resultado después de guardar (colores de la tarjeta)
+const RESULTADO = {
+  ok: { fondo: '#ecfdf5', borde: '#10b981', color: '#065f46', icono: 'check-circle' },
+  revision: { fondo: '#fffbeb', borde: '#f59e0b', color: '#92400e', icono: 'exclamation-triangle' },
+  pendiente: { fondo: '#eff6ff', borde: '#3b82f6', color: '#1e3a8a', icono: 'clock' },
+  error: { fondo: '#fef2f2', borde: '#ef4444', color: '#991b1b', icono: 'times-circle' },
+};
 const SIN_VALIDACION = { rango: null, capacidad: null, margen: 5, fotoModo: 'OPCIONAL', hoy: [] };
 const TEXTO_MODO_FOTO = {
   OBLIGATORIA: 'Obligatoria · sin foto el tanqueo queda por revisar',
@@ -63,6 +69,8 @@ export default function CombustibleScreen({ route, navigation }) {
   const [proveedor, setProveedor] = useState('');
   const [tanqueLleno, setTanqueLleno] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [enviando, setEnviando] = useState(false); // guardado; esperando hasta ~8 s a que suba
+  const [resultado, setResultado] = useState(null);
   // Lectura ambigua ya elegida por el operador para ESE texto ("125.430" → 125430 o 125,43)
   const [lecturaConfirmada, setLecturaConfirmada] = useState({ texto: null, valor: null });
 
@@ -309,19 +317,45 @@ export default function CombustibleScreen({ route, navigation }) {
           await db.runAsync('UPDATE equipos SET ultimo_odometro = MAX(COALESCE(ultimo_odometro, 0), ?) WHERE placa = ?', valOdo, placaLimpia);
         }
 
-        // 3. Disparar subida
-        enviarPendientes().catch(() => {});
-
-        Alert.alert('✅ Éxito', `Tanqueo de ${fmtNum(galonesNum)} gal por ${fmtPesos(valorPesos)} guardado. Se enviará automáticamente cuando recuperes conexión.`, [{ text: 'OK', onPress: () => navigation.goBack() }]);
       } catch (e) {
+        setIsSaving(false);
         Alert.alert('Error', 'No se pudo guardar localmente.');
+        return;
+      }
+
+      // 3. Ya está guardado en el celular: se intenta enviar y se espera hasta ~8 s el resultado
+      setEnviando(true);
+      try {
+        const { fila, pasada } = await esperarEnvioTanqueo(uuidTanqueo.current);
+        setResultado(resultadoTanqueo(fila, pasada));
+      } catch {
+        setResultado(resultadoTanqueo(null, null));
       } finally {
+        setEnviando(false);
         setIsSaving(false);
       }
     } finally {
       procesando.current = false;
     }
   };
+
+  if (resultado) {
+    const c = RESULTADO[resultado.tipo] || RESULTADO.pendiente;
+    return (
+      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
+        <View style={[styles.container, { justifyContent: 'center', padding: 20 }]}>
+          <View style={[styles.resultadoCard, { backgroundColor: c.fondo, borderColor: c.borde }]}>
+            <FontAwesome5 name={c.icono} size={40} color={c.borde} style={{ alignSelf: 'center', marginBottom: 14 }} />
+            <Text style={[styles.resultadoTitulo, { color: c.color }]}>{resultado.titulo}</Text>
+            <Text style={[styles.resultadoTexto, { color: c.color }]} selectable>{resultado.texto}</Text>
+          </View>
+          <TouchableOpacity style={styles.submitBtn} onPress={() => navigation.goBack()}>
+            <Text style={styles.submitBtnText}>Aceptar</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   if (loadingInitial) {
     return (
@@ -454,7 +488,10 @@ export default function CombustibleScreen({ route, navigation }) {
 
         <TouchableOpacity style={[styles.submitBtn, isSaving && styles.submitBtnDisabled]} onPress={procesarGuardadoOffline} disabled={isSaving}>
           {isSaving ? (
-            <ActivityIndicator color="#ffffff" />
+            <View style={{flexDirection: 'row', alignItems: 'center'}}>
+              <ActivityIndicator color="#ffffff" />
+              {enviando ? <Text style={[styles.submitBtnText, { marginLeft: 10, fontSize: 16 }]}>Enviando…</Text> : null}
+            </View>
           ) : (
             <View style={{flexDirection: 'row', alignItems: 'center'}}>
               <FontAwesome5 name="save" size={18} color="#ffffff" style={{marginRight: 10}} />
@@ -505,5 +542,8 @@ const styles = StyleSheet.create({
   fotoBtnSecText: { color: '#0f172a', fontWeight: '900', fontSize: 15 },
   submitBtn: { backgroundColor: '#10b981', width: '100%', padding: 18, borderRadius: 8, elevation: 3, marginTop: 10, justifyContent: 'center', alignItems: 'center' },
   submitBtnDisabled: { backgroundColor: '#94a3b8', elevation: 0 },
+  resultadoCard: { borderWidth: 2, borderRadius: 12, padding: 20, marginBottom: 10 },
+  resultadoTitulo: { fontSize: 20, fontWeight: '900', textAlign: 'center', marginBottom: 10 },
+  resultadoTexto: { fontSize: 15, fontWeight: '600', lineHeight: 21 },
   submitBtnText: { color: '#ffffff', fontSize: 19, fontWeight: '900' }
 });

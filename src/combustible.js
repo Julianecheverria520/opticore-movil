@@ -5,6 +5,12 @@
 // La PWA consulta /maestros/combustible/info-lectura con señal; la app NO: el token móvil solo entra
 // a auth.RUTAS_MOVIL. Todo sale de la última bajada de /movil/maestros (v11) y de SQLite.
 import { leerConfigCombustible } from './database/sync';
+import { enviarPendientes } from './database/syncUp';
+import { getDb } from './database/db';
+import { fmtNum, fmtPesos } from './combustibleNumeros';
+
+export const ESPERA_ENVIO_MS = 8000;
+const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // El servidor valida con el rango del tipo por defecto (combustible_validacion.TIPO_POR_DEFECTO)
 export const TIPO_POR_DEFECTO = 'DIESEL';
@@ -44,6 +50,49 @@ export function tanqueosDeHoy(ultimoServidor, locales = [], ahora = new Date()) 
     if (Number.isFinite(ms)) agregar(fechaHoraBogota(ms), t.cantidad_galones);
   }
   return [...vistos.values()].sort((a, b) => a.hora.localeCompare(b.hora));
+}
+
+/**
+ * Después de guardar: lanza la cola y espera hasta `ms` a que ESE tanqueo quede enviado (o
+ * rechazado). Si ya hay una pasada en curso (p. ej. la del GPS durante un viaje), espera a que esa
+ * lo suba. → { fila, pasada } (pasada = lo que devolvió enviarPendientes, o null si no alcanzó).
+ */
+export async function esperarEnvioTanqueo(uuid, ms = ESPERA_ENVIO_MS) {
+  const db = await getDb();
+  const fin = Date.now() + ms;
+  let pasada = null;
+  const envio = enviarPendientes().then((r) => { pasada = r; }).catch(() => { pasada = { error: true }; });
+  await Promise.race([envio, dormir(ms)]);
+  let fila = await db.getFirstAsync('SELECT * FROM tanqueos_pendientes WHERE uuid = ?', uuid);
+  // Sin red o sesión vencida no tiene sentido seguir esperando
+  while (fila?.sync_status === 'pending' && Date.now() < fin && !pasada?.sinRed && !pasada?.sesionExpirada) {
+    await dormir(400);
+    fila = await db.getFirstAsync('SELECT * FROM tanqueos_pendientes WHERE uuid = ?', uuid);
+  }
+  return { fila, pasada };
+}
+
+/**
+ * Aviso para el operador según cómo quedó el tanqueo.
+ * → { tipo: 'revision' | 'ok' | 'pendiente' | 'error', titulo, texto }
+ */
+export function resultadoTanqueo(fila, pasada) {
+  const que = fila ? `Tanqueo de ${fmtNum(fila.cantidad_galones)} gal por ${fmtPesos(fila.valor_total)}` : 'El tanqueo';
+  const foto = fila && fila.foto_estado === 'pending' ? '\n\nLa foto del tiquete se envía aparte, en segundo plano.' : '';
+  if (fila?.sync_status === 'synced' && fila.requiere_revision) {
+    return {
+      tipo: 'revision', titulo: 'Quedó marcado para revisión',
+      texto: `${que} quedó en el sistema. El administrador lo revisará: ${fila.motivo_revision || 'sin detalle'}.${foto}`,
+    };
+  }
+  if (fila?.sync_status === 'synced') return { tipo: 'ok', titulo: 'Guardado y enviado', texto: `${que} quedó en el sistema.${foto}` };
+  if (fila?.sync_status === 'error') {
+    return { tipo: 'error', titulo: 'El sistema no aceptó el tanqueo', texto: `${que} quedó guardado en el celular. ${fila.ultimo_error || ''}`.trim() };
+  }
+  if (pasada?.sesionExpirada) {
+    return { tipo: 'pendiente', titulo: 'Guardado en el celular', texto: `${que} se enviará cuando inicies sesión (aviso amarillo en la pantalla principal).${foto}` };
+  }
+  return { tipo: 'pendiente', titulo: 'Se enviará cuando haya señal', texto: `${que} quedó guardado en el celular y se envía solo.${foto}` };
 }
 
 /** Rango {min, max, precio, fuente, muestras, dias} de la config, o null si no sirve. */
