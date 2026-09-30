@@ -143,8 +143,8 @@ Base local del celular: SQLite `user_version` 11 (v5 GPS, v6 precisión, v7 `dia
 
 ## 7. Build `preview` (APK piloto v2)
 
-**Siguiente build: 1.3.0** desde `combustible-revision` (combustible + tanqueo durante el viaje), después de la ronda de
-pruebas y del push del backend `combustible-lectura` (ver `ESTADO_COMBUSTIBLE.md` §5.4). Lo de abajo es el build 1.1.1.
+**Build 1.3.0 (versionCode 7)** lanzado el 2026-09-30 desde `main` = `34a0235` (combustible + tanqueo durante el viaje;
+ver `ESTADO_COMBUSTIBLE.md` §5.4). Lo de abajo es el build 1.1.1.
 
 Verificado con `npx expo config --type introspect` (sin `APP_VARIANT`): paquete `com.julianecheverria.opticoremovil`, versión **1.1.1** (versionCode lo lleva EAS: `appVersionSource: remote` + `autoIncrement`; el `preview` 1.1.0 code 2 de `e842310` no tiene las fallas previas, el siguiente sale con code 3),
 permisos `RECEIVE_BOOT_COMPLETED`, `POST_NOTIFICATIONS`, `ACCESS_FINE/COARSE/BACKGROUND_LOCATION`, `FOREGROUND_SERVICE(_LOCATION)`, `CAMERA`; `RECORD_AUDIO` removido.

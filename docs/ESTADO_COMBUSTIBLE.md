@@ -195,5 +195,7 @@ que llega tarde no se marca). No baja `ultimo_*`. Aplica en `/guardar`, la corre
 1. **Julián**: ronda única de pruebas en el celular (GPS + Fase B + combustible + tanqueo durante el viaje).
 2. ~~Push de `combustible-lectura`~~: hecho el 2026-09-30 (`b331750..1b38684`). Julián saltó la prueba local (bloque A);
    la regla se verifica en producción en el paso G. **Julián**: revisar en el log de Render que no aparezca `ESQUEMA: FALTAN`.
-3. Push de `combustible-revision` de opticore-movil y build `preview` 1.3.0
-   (`npx eas-cli build -p android --profile preview`), instalado encima del piloto.
+1b. ~~Ronda de pruebas~~: **B–I OK según Julián (2026-09-30)**; bloque A (backend local) saltado; Render sin `ESQUEMA: FALTAN`.
+3. ~~Push~~: `main` = `origin/main` = `34a0235` (fast-forward de `combustible-revision`, 2026-09-30). Build `preview` **1.3.0
+   (versionCode 7)** lanzado el 2026-09-30: https://expo.dev/accounts/julianecheverria/projects/opticore-movil/builds/8ff98456-a5aa-4845-969c-33da3fe3449d
+   Falta: instalarlo encima del piloto y repetir una prueba corta (tanqueo durante un viaje con pantalla bloqueada).
