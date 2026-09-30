@@ -50,6 +50,8 @@ function payloadTanqueo(r) {
     latitud: r.latitud,
     longitud: r.longitud,
     observaciones: r.observaciones || '',
+    // v11 · el operador vio la advertencia de precio/capacidad y confirmó (el servidor lo anota en el motivo)
+    advertencia_confirmada: !!r.advertencia_confirmada,
   };
 }
 
