@@ -3,6 +3,8 @@
 Última actualización: 2026-09-27. opticore-movil en GitHub (`main`, ver §6). AppTransporte: `origin/main` en `27bfd08` (verificado con git el 2026-09-27; incluye `6003791` ruta óptima y peajes). Según Julián: SQL de rutas/peajes corrido en Supabase y relleno de la empresa 1 aplicado (no verificado desde aquí). **2026-09-27: `6003791` se desplegó antes que su SQL → la web falló con `column equipos.categoria_peaje does not exist`; ya resuelto.** Desde `core/verificar_esquema.py` el backend avisa en el log si faltan columnas.
 Leer este archivo al empezar cualquier sesión sobre viajes/GPS.
 Tanqueos (validación de precio/galón y corrección con log): trabajo aparte, en `docs/ESTADO_COMBUSTIBLE.md` (rama `combustible-revision`).
+**App 1.3.0 (2026-09-30, rama `combustible-revision`, sin push)**: combustible con validaciones, foto del tiquete y **tanqueo
+durante el viaje** (botón en Viaje en curso); la cola ya no deja que un tanqueo frene los puntos. Ver `ESTADO_COMBUSTIBLE.md` §5.
 
 ---
 
@@ -69,7 +71,7 @@ Migraciones **ya ejecutadas** en Supabase: `migraciones_sql/2026_09_viajes_movil
 | `8ae49cf` · `02ef3b0` · `7b617f5` | **Logos 1.1.2**: launcher solo con el cubo (dentro de la zona segura), logo completo en el splash (`expo-splash-screen`, 136 dp, sobre blanco), ícono de la notificación del GPS = cubo blanco (`plugins/icono-notificacion.js` → drawable `notification_icon`); `expo-system-ui`, `expo-font`; sin `edgeToEdgeEnabled` ni `newArchEnabled`. `expo-doctor` 21/21 y `prebuild` sin avisos. **Requiere build nuevo** |
 | (este commit) | **Fase B · ruta planeada y peajes (1.2.0)**: SQLite v10 (`rutas.geometria`, `equipos.categoria_peaje`, tabla `peajes_ruta`), `src/rutaPlaneada.js`. Mapa: ruta planeada punteada violeta DEBAJO del recorrido real (entra en el encuadre inicial), peajes como `Marker` de React con nombre y valor de la categoría del equipo (el estilo raster no trae glyphs: una capa de texto no se vería sin señal). Panel: fila "Peajes en esta ruta: N · $ X" (solo si la ruta tiene línea) y lista de peajes en el detalle. Sin geometría: mapa y panel como antes. Solo JS |
 
-Base local del celular: SQLite `user_version` 10 (v5 GPS, v6 precisión, v7 `diag_envio`, v8 `intentos_etapa`, v9 `fallas_abiertas`, v10 ruta planeada y peajes).
+Base local del celular: SQLite `user_version` 11 (v5 GPS, v6 precisión, v7 `diag_envio`, v8 `intentos_etapa`, v9 `fallas_abiertas`, v10 ruta planeada y peajes, v11 tanqueos: foto del tiquete, marca del servidor, `viaje_uuid`, último tanqueo por equipo).
 `viajes_locales.sync_status`: `pending | synced | error | descartado`; `estado_local`: `EN_CURSO | FINALIZADO | DESCARTADO`.
 
 ---
@@ -140,6 +142,9 @@ Base local del celular: SQLite `user_version` 10 (v5 GPS, v6 precisión, v7 `dia
 `origin` = `https://github.com/Julianecheverria520/opticore-movil.git` (privado), rama `main` (antes `master`). Primer push el 2026-09-26.
 
 ## 7. Build `preview` (APK piloto v2)
+
+**Siguiente build: 1.3.0** desde `combustible-revision` (combustible + tanqueo durante el viaje), después de la ronda de
+pruebas y del push del backend `combustible-lectura` (ver `ESTADO_COMBUSTIBLE.md` §5.4). Lo de abajo es el build 1.1.1.
 
 Verificado con `npx expo config --type introspect` (sin `APP_VARIANT`): paquete `com.julianecheverria.opticoremovil`, versión **1.1.1** (versionCode lo lleva EAS: `appVersionSource: remote` + `autoIncrement`; el `preview` 1.1.0 code 2 de `e842310` no tiene las fallas previas, el siguiente sale con code 3),
 permisos `RECEIVE_BOOT_COMPLETED`, `POST_NOTIFICATIONS`, `ACCESS_FINE/COARSE/BACKGROUND_LOCATION`, `FOREGROUND_SERVICE(_LOCATION)`, `CAMERA`; `RECORD_AUDIO` removido.

@@ -7,6 +7,11 @@ y `/{id}/marcar-revisado` = 401 (existen). opticore-movil: rama `combustible-rev
 con el build de la fase GPS.
 Leer este archivo al empezar cualquier sesión sobre combustible.
 
+**App 1.3.0 (2026-09-30)**: validaciones, foto del tiquete y tanqueo durante el viaje en la rama
+`combustible-revision` de opticore-movil (commits locales, sin push; ver §5). Backend: regla "lectura menor
+que la anterior" en la rama `combustible-lectura` de AppTransporte (`1b38684`, sin push, sin SQL): se despliega
+ANTES del push de la app.
+
 **Foto del tiquete (2026-09-28): en producción (`b331750`)**. Verificado sin credenciales el 2026-09-28: `sw.js` = `opticore-v12`, `foto_tiquete.js` = 200, `app_combustible_logic.js` v5, `POST /movil/combustible/{uuid}/foto` y `POST /maestros/combustible/{id}/foto` = 401 (existen). Ver §4.
 
 ---
@@ -76,7 +81,7 @@ tener los recibos. Las pruebas locales llegaron sin detallar (el mensaje traía 
 `templates/app_combustible.html` no tiene ruta que lo sirva (plantilla muerta; no se tocó).
 
 ### App (opticore-movil, rama `combustible-revision`)
-Nada todavía.
+Ver §5.
 
 ## 4. Foto del tiquete (AppTransporte rama `combustible-foto`, desde `f53be8a`)
 
@@ -126,10 +131,7 @@ antes del SQL). Sin escrituras.
    22 y 27 desde el panel.
 
 ### 4.4 Después (no ahora)
-- **App nativa** (build de la fase GPS): SQLite v11 `tanqueos_pendientes.foto_uri/foto_estado/intentos_foto`;
-  `expo-image-manipulator` (1600 px, 0.7) y `UploadTask` a `/movil/combustible/{uuid}/foto` como etapa aparte,
-  después de que el tanqueo quede sincronizado, sin bloquear la cola; confirmación según `combustible.foto_tiquete`
-  de `/movil/maestros`. La ruta ya está en `auth.RUTAS_MOVIL` (prefijo `/movil/`).
+- ~~App nativa~~: hecho en la app 1.3.0 (§5).
 - **Leer el tiquete con IA**: al llegar la foto, un modelo de visión extrae galones, valor, precio/galón,
   fecha, estación y placa → `ia_tiquete` (JSON con confianza). Nunca corrige solo: si difiere (galones ±2 %,
   valor ±1 %) marca REVISAR "El tiquete dice …" y el detalle muestra digitado vs. leído con "Aplicar valores
@@ -141,11 +143,57 @@ antes del SQL). Sin escrituras.
 2. **Julián**: en producción, Parámetros de cada empresa (empresa 1 casi sin datos: precio manual) y resolver 16 y 27
    con los recibos.
 3. Cargar `capacidad_tanque_gal` (hoy 0 de 22 equipos).
-4. App nativa (con el build de la fase GPS), solo JS: separadores (`number-pad` en valor, `decimal-pad` + `parseDecimal`
-   en galones, lectura ambigua con confirmación), "Se guardará", advertencia con el rango de `/movil/maestros`
-   (AsyncStorage), `advertencia_confirmada`, y "Ya hay un tanqueo de este equipo hoy a las HH:MM (X gal). ¿Es uno
-   nuevo?" con `equipos.ultimo_tanqueo` de maestros + `tanqueos_pendientes` del celular (sin señal). Build `preview`.
+4. ~~App nativa~~: hecha (§5). Falta la ronda de pruebas en el celular, el despliegue de `1b38684` y el build
+   `preview` 1.3.0 (§5.4).
 5. Vigilar: todo segundo tanqueo del mismo equipo en el día queda por revisar. Si molesta, limitar a "misma lectura"
    o a una ventana de horas.
 6. No hay "desanular" en pantalla (a propósito); si hiciera falta, se agrega con su log.
 7. **Foto del tiquete**: ver §4.3.
+
+## 5. App nativa 1.3.0 (opticore-movil, rama `combustible-revision`)
+
+Plan aprobado por Julián el 2026-09-30. Solo JS (sin módulos nativos nuevos): sirve el development build actual
+("OptiCore DEV"). Commits locales, sin push.
+
+### 5.1 Hecho
+| Commit | Qué |
+|---|---|
+| `cbfd660` | `src/combustibleNumeros.js`: copia de `combustible_numeros.js` (PWA), 1253 comparaciones iguales |
+| `0fc65e5` | favicon web con el logo nuevo (aparte; no es de combustible) |
+| `c5838d8` | **SQLite v11** (solo agrega columnas): `tanqueos_pendientes` → `advertencia_confirmada`, `foto_uri`, `foto_estado` (`sin_foto`/`pending`/`synced`/`error`/`descartada`), `intentos_foto`, `diag_foto`, `requiere_revision`, `motivo_revision`, `viaje_uuid` (solo local); `equipos` → `ultimo_tanqueo_fecha`, `ultimo_tanqueo_galones`. Clave `combustible` de maestros en AsyncStorage (`leerConfigCombustible`) |
+| `711ac51` | Banco de pruebas en Node versionado (`scripts/banco/`) |
+| `1693291` | **Pantalla**: `decimal-pad` en galones y lectura, `number-pad` en valor; "Se guardará" en cada campo; precio/galón en vivo con rango (verde/ámbar); confirmaciones en el orden y con los textos de la PWA. `src/combustible.js`: rango DIESEL, margen, modo de foto y "tanqueo de hoy" (ultimo_tanqueo de hoy en Bogotá + tanqueos del celular, sin repetir). **No usa `info-lectura`**: el token móvil no entra ahí (`auth.RUTAS_MOVIL`); todo sale de maestros |
+| `3bd24fd` | Lectura menor que la anterior: ya no bloquea; "La lectura (X) es menor que la anterior (Y). ¿Es correcta?" → `advertencia_confirmada`. El contador local solo sube (antes bajaba) |
+| `2765aec` | **Cola**: un tanqueo sin respuesta o con 5xx detiene solo su cola (los puntos del viaje siguen; 401 detiene todo). **Foto del tiquete** (`src/tiquetes.js`): `tiquetes/{uuid}.jpg`, etapa aparte al final con candado propio, solo con el tanqueo enviado; SIN RESPUESTA → pausa 5 min; rechazo (salvo 408/429) o 5 fallas → error; `ya_tiene_foto` = enviada. Pantalla: tomar/cambiar/quitar, "¿Guardar sin foto del tiquete?" / "Falta la foto del tiquete". Home: tarjeta "Fotos de tiquetes" (Enviar ahora / Reintentar). Limpieza de huérfanas |
+| `c4b4dbe` | Foto con error: se conserva (tanqueo y archivo) hasta Reintentar o **Descartar** (con confirmación) en Home |
+| `546951b` | **Resultado**: espera hasta ~8 s ("Enviando…"); tarjeta ámbar "Quedó marcado para revisión" con el motivo, verde "Guardado y enviado", azul "Se enviará cuando haya señal", roja si el servidor lo rechaza |
+| `5d24864` | **Tanqueo durante el viaje**: botón "Registrar tanqueo" en el panel de Viaje en curso (push, el viaje sigue montado, no toca el GPS); coordenadas del último punto del viaje (≤ 10 min) o la ubicación actual; "Detén el vehículo antes de registrar el tanqueo" (> 10 km/h, no bloquea); Atrás del viaje solo con el viaje enfocado. **Borrador** por placa (12 h): si la app se cierra, "Tienes un tanqueo sin guardar de las HH:MM. ¿Continuar?" con el mismo uuid; recupera la foto si Android cerró la app con la cámara abierta; salir con datos pide "¿Descartar lo digitado?" |
+| (este commit) | Documentación y versión **1.3.0** |
+
+Pruebas en Node (sin celular ni servidor): `probar_sqlite_v11` 23, `probar_combustible` 23, `probar_cola_fotos` 49,
+`probar_viaje_tanqueo` 22, `probar_combustible_numeros` (1253 comparaciones con la PWA). El paquete Android compila
+(`npx expo export --platform android`). **No se ha probado en el celular.**
+
+    node --import ./scripts/banco/registro.mjs scripts/banco/<prueba>.mjs
+
+### 5.2 Backend: lectura menor que la anterior (AppTransporte, rama `combustible-lectura`, `1b38684`, sin push)
+`evaluar_registro` → `motivos_lectura`: REVISAR "Lectura menor que la anterior (125.430 Km, preoperacional del
+28 sep)" o "(…, tanqueo #N del 27 sep)". La anterior = la **más reciente** antes de la fecha del tanqueo entre
+tanqueos no anulados y preoperacionales (decisión de Julián, 2026-09-30: incluir preoperacionales). La más reciente
+y no la mayor: tras un cambio de odómetro solo se marca el primero. No usa `equipos.ultimo_*` (un tanqueo sin señal
+que llega tarde no se marca). No baja `ultimo_*`. Aplica en `/guardar`, la corrección y el script. Sin SQL.
+`test_combustible_validacion.py`: 53 OK (10 nuevas); `test_combustible_foto.py`: 23 OK (2026-09-30, SQLite en memoria).
+
+### 5.3 Decisiones
+- La foto del tiquete **no bloquea** ni frena los puntos del viaje; el tanqueo nunca espera a la foto.
+- Foto con error: no se borra a los 14 días; solo Reintentar (éxito) o Descartar a mano.
+- Borrador: uno por placa, vigente 12 h; la limpieza de `tiquetes/` respeta sus fotos.
+- Vincular el tanqueo al viaje en el servidor (`viaje_uuid_cliente` en `registros_combustible`): **después**. La app
+  ya guarda `viaje_uuid` en el celular, pero no lo envía.
+
+### 5.4 Para desplegar (en orden)
+1. **Julián**: ronda única de pruebas en el celular (GPS + Fase B + combustible + tanqueo durante el viaje).
+2. Push de `combustible-lectura` en AppTransporte (fast-forward a `main`, sin SQL). Después, **Julián**: revisar en el
+   log de Render que no aparezca `ESQUEMA: FALTAN`.
+3. Push de `combustible-revision` de opticore-movil y build `preview` 1.3.0
+   (`npx eas-cli build -p android --profile preview`), instalado encima del piloto.

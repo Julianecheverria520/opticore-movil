@@ -122,9 +122,25 @@ La pantalla muestra **el mapa completo** con tu recorrido:
 
 ### Panel de abajo
 
-- Abajo hay un **panel** con dos botones: **Preoperacional / Novedad** y **Finalizar viaje**.
+- Abajo hay un **panel** con tres botones: **Preoperacional / Novedad**, **Registrar tanqueo** y **Finalizar viaje**.
 - **Desliza el panel hacia arriba** para ver todos los detalles (estado del GPS, fotos, envío).
 - **Deslízalo hacia abajo** para volver a ver el mapa.
+
+### Registrar un tanqueo (también durante el viaje)
+
+1. **Detén la volqueta.** Si va andando, la app muestra *"Detén el vehículo antes de registrar el tanqueo"*
+   (un acompañante sí puede registrarlo).
+2. En **Viaje en curso** toca **Registrar tanqueo** (o **Combustible** en la pantalla principal). La placa ya viene
+   puesta. **El recorrido se sigue grabando**: no hay que finalizar ni pausar el viaje.
+3. Escribe la **lectura**, los **galones** (con coma o punto: `25,5`) y el **valor pagado** (solo números: `275000`).
+   Debajo de cada campo verás **"Se guardará: …"**: revisa que sea lo que dice el tiquete.
+4. Toma la **foto del tiquete** (botón azul).
+5. Toca **Guardar Tanqueo**. Si la app te pregunta algo (precio raro, lectura menor, otro tanqueo hoy), revisa
+   el tiquete antes de decir que sí.
+6. Al terminar vuelves al viaje, con el mapa igual que antes.
+
+Si la app se cierra con el formulario a medias, al volver a abrir el tanqueo te pregunta si quieres
+**continuar** lo que habías escrito.
 
 ---
 
@@ -180,6 +196,7 @@ En **Viaje en curso** (desliza el panel hacia arriba) → **GPS del recorrido �
 | Amarilla **Viaje en curso** | Tócala para ver el viaje o finalizarlo. |
 | Amarilla **Inicia sesión para enviar** | Tócala e ingresa tu usuario y contraseña. |
 | Naranja **viaje(s) abierto(s) en el sistema** | Tócala para ver cuál es y avisa a tu supervisor. |
+| Azul **Fotos de tiquetes** | Fotos por enviar: con señal se envían solas (o toca **Enviar ahora**). Si dice "con error", toca **Reintentar**; usa **Descartar** solo si tu supervisor te lo indica. |
 | Roja **Viaje con problema de envío** | Tócala: **Reintentar envío**. Si sigue fallando, toma captura y avisa. Usa **Descartar** solo si tu supervisor te lo indica. |
 
 ---
