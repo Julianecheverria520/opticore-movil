@@ -143,15 +143,16 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
     onPanResponderTerminate: () => moverPanel(posPanel.current === 0),
   }), [cerrado, desplazamiento, moverPanel]);
 
-  // Botón Atrás de Android con el panel arriba: lo baja en vez de salir
+  // Botón Atrás de Android con el panel arriba: lo baja en vez de salir. Solo con ESTA pantalla
+  // enfocada: con el tanqueo o el preoperacional encima (el viaje sigue montado debajo), Atrás es de ellos.
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (!panelAbierto || mapaFalla) return false;
+      if (!enfocada || !panelAbierto || mapaFalla) return false;
       moverPanel(false);
       return true;
     });
     return () => sub.remove();
-  }, [panelAbierto, mapaFalla, moverPanel]);
+  }, [enfocada, panelAbierto, mapaFalla, moverPanel]);
 
   useEffect(() => {
     const quitar = NetInfo.addEventListener((e) => setSinRed(!e.isConnected || e.isInternetReachable === false));
@@ -476,6 +477,9 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
   );
 
   const irPreoperacional = () => navigation.navigate('Preoperacional', { placa: viaje.placa });
+  // Tanqueo sin salir del viaje: la pantalla de combustible se abre ENCIMA (push) y vuelve con goBack.
+  // Esta pantalla sigue montada (mapa, panel y recorrido intactos); el GPS no se toca.
+  const irTanqueo = () => navigation.push('Combustible', { placa: viaje.placa, viajeUuid: viaje.uuid });
 
   // ── Respaldo SIN mapa: la pantalla de antes (el módulo del mapa no existe o falló)
   if (mapaFalla) {
@@ -493,6 +497,11 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
           <TouchableOpacity style={[styles.btnSecundario, { marginTop: 4 }]} onPress={irPreoperacional}>
             <Text style={styles.btnSecundarioTexto}>Preoperacional / Novedad</Text>
           </TouchableOpacity>
+          {enCurso ? (
+            <TouchableOpacity style={[styles.btnSecundario, { backgroundColor: '#d1fae5' }]} onPress={irTanqueo}>
+              <Text style={[styles.btnSecundarioTexto, { color: '#065f46' }]}>⛽ Registrar tanqueo</Text>
+            </TouchableOpacity>
+          ) : null}
           {enCurso ? (
             <TouchableOpacity style={[styles.btnFinalizar, finalizando && { backgroundColor: '#94a3b8' }]} onPress={finalizar} disabled={finalizando}>
               {finalizando ? <ActivityIndicator color="#fff" /> : (
@@ -553,16 +562,23 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
           </View>
         ) : null}
         <View style={styles.botonesPanel}>
-          <TouchableOpacity style={styles.btnPanelPreop} onPress={irPreoperacional}>
-            <FontAwesome5 name="clipboard-check" size={20} color="#1e40af" style={{ marginRight: 8 }} />
-            <Text style={styles.btnPanelPreopTexto} numberOfLines={2}>Preoperacional / Novedad</Text>
+          {/* En curso: tres botones del mismo alto (ícono arriba, texto abajo); terminado: dos como antes */}
+          <TouchableOpacity style={[styles.btnPanelPreop, enCurso && styles.btnPanelColumna]} onPress={irPreoperacional}>
+            <FontAwesome5 name="clipboard-check" size={20} color="#1e40af" style={enCurso ? styles.iconoColumna : { marginRight: 8 }} />
+            <Text style={[styles.btnPanelPreopTexto, enCurso && styles.textoColumna]} numberOfLines={2}>Preoperacional / Novedad</Text>
           </TouchableOpacity>
           {enCurso ? (
-            <TouchableOpacity style={[styles.btnPanelFinalizar, finalizando && { backgroundColor: '#94a3b8' }]} onPress={finalizar} disabled={finalizando}>
+            <TouchableOpacity style={[styles.btnPanelTanqueo, styles.btnPanelColumna]} onPress={irTanqueo} accessibilityLabel="Registrar tanqueo">
+              <FontAwesome5 name="gas-pump" size={20} color="#065f46" style={styles.iconoColumna} />
+              <Text style={[styles.btnPanelTanqueoTexto, styles.textoColumna]} numberOfLines={2}>Registrar tanqueo</Text>
+            </TouchableOpacity>
+          ) : null}
+          {enCurso ? (
+            <TouchableOpacity style={[styles.btnPanelFinalizar, styles.btnPanelColumna, finalizando && { backgroundColor: '#94a3b8' }]} onPress={finalizar} disabled={finalizando}>
               {finalizando ? <ActivityIndicator color="#fff" /> : (
                 <>
-                  <FontAwesome5 name="flag-checkered" size={20} color="#fff" style={{ marginRight: 8 }} />
-                  <Text style={styles.btnPanelFinalizarTexto} numberOfLines={2}>Finalizar viaje</Text>
+                  <FontAwesome5 name="flag-checkered" size={20} color="#fff" style={styles.iconoColumna} />
+                  <Text style={[styles.btnPanelFinalizarTexto, styles.textoColumna]} numberOfLines={2}>Finalizar viaje</Text>
                 </>
               )}
             </TouchableOpacity>
@@ -639,6 +655,12 @@ const styles = StyleSheet.create({
   btnPanelPreopTexto: { flexShrink: 1, color: '#1e3a8a', fontWeight: '900', fontSize: 16, textAlign: 'center' },
   btnPanelFinalizar: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#dc2626', borderRadius: 12, paddingHorizontal: 10 },
   btnPanelFinalizarTexto: { flexShrink: 1, color: '#fff', fontWeight: '900', fontSize: 18, textAlign: 'center' },
+  btnPanelTanqueo: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#d1fae5', borderRadius: 12, marginRight: 10, paddingHorizontal: 6, borderWidth: 2, borderColor: '#6ee7b7' },
+  btnPanelTanqueoTexto: { flexShrink: 1, color: '#065f46', fontWeight: '900', fontSize: 16, textAlign: 'center' },
+  // Con tres botones: columna (ícono arriba, texto abajo) para que quepan con guantes
+  btnPanelColumna: { flexDirection: 'column', paddingHorizontal: 6 },
+  iconoColumna: { marginBottom: 4 },
+  textoColumna: { fontSize: 14, lineHeight: 17 },
   contenidoPanel: { paddingHorizontal: 16, paddingTop: 8 },
   filaResumenPeajes: { height: ALTO_PEAJES, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12 },
   textoResumenPeajes: { fontSize: 14, fontWeight: '800', color: '#92400e' },

@@ -8,8 +8,8 @@
 //   SIN RESPUESTA → espera 5 min (salvo "Enviar ahora"); rechazo 4xx (salvo 408/429) o 5 fallas → error.
 //   "ya_tiene_foto" (el administrador ya puso otra) cuenta como enviada. Una foto con error se
 //   conserva (tanqueo y archivo) hasta que suba con "Reintentar" o se descarte a mano ('descartada').
-// - Limpieza: borra archivos de tiquetes/ sin fila en tanqueos_pendientes y que no sean la foto de
-//   un formulario abierto (con más de 1 h, por si acaso).
+// - Limpieza: borra archivos de tiquetes/ sin fila en tanqueos_pendientes ni borrador vigente del
+//   formulario (src/borrador.js), y con más de 1 h (por si el borrador aún no se escribió).
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import { File, Directory, Paths } from 'expo-file-system';
@@ -18,9 +18,9 @@ import { API_URL } from './config';
 import { leerToken } from './sesion';
 import { getDb, ahoraISO } from './database/db';
 import { reducirFoto, subirArchivo, existeArchivo, borrarArchivo, tamanoKB } from './viajes';
+import { fotosDeBorradoresVigentes } from './borrador';
 
 const CARPETA = 'tiquetes';
-const CLAVE_EN_USO = 'tiquetesEnFormulario'; // nombres de archivo de formularios abiertos (aún sin fila)
 export const TIMEOUT_FOTO_TIQUETE_MS = 120000;
 export const PAUSA_FOTO_TIQUETE_MS = 5 * 60000;
 export const MAX_INTENTOS_FOTO = 5;
@@ -36,20 +36,9 @@ function carpeta() {
 
 const nombreDe = (uri) => String(uri || '').split(/[/\\]/).pop().split('?')[0];
 
-async function leerEnUso() {
-  try { const l = JSON.parse((await AsyncStorage.getItem(CLAVE_EN_USO)) || '[]'); return Array.isArray(l) ? l : []; }
-  catch { return []; }
-}
-
-async function marcarEnUso(nombre, enUso) {
-  const l = (await leerEnUso()).filter((n) => n !== nombre);
-  if (enUso) l.push(nombre);
-  await AsyncStorage.setItem(CLAVE_EN_USO, JSON.stringify(l));
-}
-
 /**
- * Guarda la foto de la cámara como tiquetes/{uuid}.jpg (reducida; si falla la reducción, la original)
- * y la marca como "en un formulario abierto" para que la limpieza no la borre. Devuelve la URI.
+ * Guarda la foto de la cámara como tiquetes/{uuid}.jpg (reducida; si falla la reducción, la original).
+ * Mientras el formulario no se guarde, la protege su borrador (src/borrador.js). Devuelve la URI.
  */
 export async function guardarFotoTiquete(uriTemporal, uuid, anchoOriginal) {
   const destino = new File(carpeta(), `${uuid}.jpg`);
@@ -62,15 +51,7 @@ export async function guardarFotoTiquete(uriTemporal, uuid, anchoOriginal) {
   if (destino.exists) destino.delete();
   await new File(origen).copy(destino);
   if (origen !== uriTemporal) { try { new File(origen).delete(); } catch { /* temporal */ } }
-  await marcarEnUso(destino.name, true);
   return destino.uri;
-}
-
-/** El formulario terminó: guardó (la fila ya la referencia) o salió sin guardar (borrar = true). */
-export async function soltarFotoFormulario(uri, { borrar = false } = {}) {
-  if (!uri) return;
-  if (borrar) borrarArchivo(uri);
-  try { await marcarEnUso(nombreDe(uri), false); } catch { /* la limpieza la respeta 1 h */ }
 }
 
 // ── Envío ──────────────────────────────────────────────────────────────────────
@@ -241,7 +222,7 @@ export async function limpiarTiquetesHuerfanos(db) {
     if (r.uuid) usados.add(`${r.uuid}.jpg`);
     if (r.foto_uri) usados.add(nombreDe(r.foto_uri));
   }
-  for (const n of await leerEnUso()) usados.add(n);
+  for (const n of await fotosDeBorradoresVigentes()) usados.add(n);
 
   let borrados = 0;
   for (const f of dir.list()) {

@@ -95,6 +95,52 @@ export function resultadoTanqueo(fila, pasada) {
   return { tipo: 'pendiente', titulo: 'Se enviará cuando haya señal', texto: `${que} quedó guardado en el celular y se envía solo.${foto}` };
 }
 
+// ── Tanqueo durante un viaje en curso ────────────────────────────────────────
+// Coordenadas: el último punto del GPS del viaje si tiene ≤ 10 min (parado en la bomba no llegan
+// puntos nuevos: el GPS solo entrega cada 30 m, así que ese punto sigue siendo el sitio). Si no,
+// la ubicación actual, como fuera del viaje. Nada de esto enciende ni reinicia el GPS del viaje.
+export const EDAD_MAXIMA_PUNTO_MS = 10 * 60000;
+// Aviso "Detén el vehículo": > 10 km/h según el último punto (≤ 30 s) o el sistema (≤ 20 s).
+// Ventanas cortas: el último punto antes de frenar puede traer 20 km/h y daría un aviso falso.
+export const VELOCIDAD_AVISO_MS = 10 / 3.6;
+export const EDAD_MAXIMA_VELOCIDAD_PUNTO_MS = 30000;
+export const EDAD_MAXIMA_VELOCIDAD_SISTEMA_MS = 20000;
+
+export async function ultimoPuntoViaje(db, viajeUuid) {
+  if (!viajeUuid) return null;
+  return db.getFirstAsync(
+    'SELECT latitud, longitud, velocidad, ts_iso FROM puntos_gps WHERE viaje_uuid = ? ORDER BY seq DESC LIMIT 1', viajeUuid
+  );
+}
+
+/** {lat, lon} del último punto del viaje si es reciente; null si no hay o es viejo. */
+export function ubicacionDePunto(punto, ahora = Date.now()) {
+  const ms = Date.parse(punto?.ts_iso || '');
+  if (!punto || !Number.isFinite(ms) || ahora - ms > EDAD_MAXIMA_PUNTO_MS) return null;
+  if (typeof punto.latitud !== 'number' || typeof punto.longitud !== 'number') return null;
+  return { lat: punto.latitud, lon: punto.longitud };
+}
+
+/**
+ * Velocidad reciente en m/s (null si no se sabe): la del último punto del viaje si tiene ≤ 30 s,
+ * si no la de la última ubicación del sistema (expo-location) si tiene ≤ 20 s.
+ */
+export function velocidadReciente(punto, sistema, ahora = Date.now()) {
+  const msPunto = Date.parse(punto?.ts_iso || '');
+  if (punto?.velocidad != null && Number.isFinite(msPunto) && ahora - msPunto <= EDAD_MAXIMA_VELOCIDAD_PUNTO_MS) {
+    return Number(punto.velocidad);
+  }
+  const vSis = sistema?.coords?.speed;
+  if (vSis != null && vSis >= 0 && Number.isFinite(Number(sistema.timestamp)) && ahora - Number(sistema.timestamp) <= EDAD_MAXIMA_VELOCIDAD_SISTEMA_MS) {
+    return Number(vSis);
+  }
+  return null;
+}
+
+export function vaEnMovimiento(velocidad) {
+  return velocidad != null && velocidad > VELOCIDAD_AVISO_MS;
+}
+
 /** Rango {min, max, precio, fuente, muestras, dias} de la config, o null si no sirve. */
 function rangoValido(r) {
   return r && Number.isFinite(Number(r.min)) && Number.isFinite(Number(r.max)) ? r : null;

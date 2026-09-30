@@ -11,9 +11,12 @@ import { API_URL } from '../config';
 import { getDb, nuevoUUID, ahoraISO, parseNum, esMaquinaria } from '../database/db';
 import { fetchConTimeout } from '../red';
 import { parseDecimal, parseMoneda, parseLectura, fmtPesos, fmtNum, advertenciasTanqueo } from '../combustibleNumeros';
-import { datosValidacion, esperarEnvioTanqueo, resultadoTanqueo } from '../combustible';
-import { guardarFotoTiquete, soltarFotoFormulario } from '../tiquetes';
-import { tamanoKB } from '../viajes';
+import {
+  datosValidacion, esperarEnvioTanqueo, resultadoTanqueo, ultimoPuntoViaje, ubicacionDePunto, velocidadReciente, vaEnMovimiento,
+} from '../combustible';
+import { guardarFotoTiquete } from '../tiquetes';
+import { tamanoKB, existeArchivo, borrarArchivo } from '../viajes';
+import { leerBorrador, guardarBorrador, borrarBorrador, borradorVigente } from '../borrador';
 
 // Números y avisos iguales a la PWA (combustibleNumeros.js): "Se guardará: X" debajo de cada campo,
 // precio por galón con el rango de la empresa y confirmaciones en el mismo orden (lectura ambigua →
@@ -22,6 +25,12 @@ import { tamanoKB } from '../viajes';
 // anterior inflada por error): se confirma, y el contador del equipo en el celular no baja.
 // Foto del tiquete (src/tiquetes.js): se toma aquí y sube DESPUÉS de que el tanqueo quede enviado;
 // según la empresa es opcional, recomendada (pide confirmar sin foto) u obligatoria (sin foto queda por revisar).
+//
+// Durante un viaje ("⛽ Registrar tanqueo" en Viaje en curso, params.viajeUuid): se abre ENCIMA del viaje
+// (que sigue montado) y vuelve con goBack. No toca el GPS del viaje: coordenadas del último punto del
+// recorrido si es reciente, y aviso "Detén el vehículo" si va a más de 10 km/h (no bloquea).
+// Borrador (src/borrador.js): lo digitado y la foto se guardan mientras se escribe; si la app se cierra,
+// al volver se ofrece continuar. Salir con datos pide confirmar "¿Descartar lo digitado?".
 
 const COLOR_AVISO = { ok: '#065f46', warn: '#b45309', err: '#b91c1c' };
 // Resultado después de guardar (colores de la tarjeta)
@@ -56,7 +65,8 @@ function preguntar(titulo, lineas, botones) {
 }
 
 export default function CombustibleScreen({ route, navigation }) {
-  const { placa } = route.params;
+  const { placa, viajeUuid = null } = route.params;
+  const placaLimpia = (placa || '').trim().toUpperCase();
 
   const [lecturaBase, setLecturaBase] = useState(0);
   const [unidad, setUnidad] = useState('Km');
@@ -77,14 +87,19 @@ export default function CombustibleScreen({ route, navigation }) {
   const uuidTanqueo = useRef(nuevoUUID()); // uno por formulario: el servidor no duplica un reenvío
   const procesando = useRef(false);        // tocar Guardar dos veces no abre dos flujos
 
-  // Foto del tiquete: tiquetes/{uuid}.jpg. Si se sale sin guardar, el archivo se borra.
+  // Foto del tiquete: tiquetes/{uuid}.jpg. Si se descarta el formulario, el archivo se borra.
   const [foto, setFoto] = useState(null);  // { uri, ver, kb }
   const [tomandoFoto, setTomandoFoto] = useState(false);
   const fotoRef = useRef(null);
-  const guardado = useRef(false);
-  useEffect(() => () => {
-    if (fotoRef.current && !guardado.current) soltarFotoFormulario(fotoRef.current, { borrar: true });
-  }, []);
+  const guardado = useRef(false);   // ya está en tanqueos_pendientes
+  const descartado = useRef(false); // el operador descartó lo digitado
+  const [listo, setListo] = useState(false); // ya se decidió qué hacer con un borrador anterior
+  const [enMovimiento, setEnMovimiento] = useState(false);
+
+  const ponerFoto = (uri) => {
+    fotoRef.current = uri;
+    setFoto(uri ? { uri, ver: Date.now(), kb: tamanoKB(uri) } : null); // ver: la vista previa no usa la anterior en caché
+  };
 
   const tomarFoto = async () => {
     try {
@@ -93,9 +108,7 @@ export default function CombustibleScreen({ route, navigation }) {
       const r = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.5 });
       if (r.canceled || !r.assets?.length) return;
       setTomandoFoto(true);
-      const uri = await guardarFotoTiquete(r.assets[0].uri, uuidTanqueo.current, r.assets[0].width);
-      fotoRef.current = uri;
-      setFoto({ uri, ver: Date.now(), kb: tamanoKB(uri) }); // ver: la vista previa no usa la imagen anterior en caché
+      ponerFoto(await guardarFotoTiquete(r.assets[0].uri, uuidTanqueo.current, r.assets[0].width));
     } catch (e) {
       console.warn('Foto del tiquete:', e?.message || e);
       Alert.alert('Foto del tiquete', 'No se pudo guardar la foto. Tómala de nuevo.');
@@ -106,15 +119,105 @@ export default function CombustibleScreen({ route, navigation }) {
 
   const quitarFoto = () => {
     const uri = fotoRef.current;
-    fotoRef.current = null;
-    setFoto(null);
-    soltarFotoFormulario(uri, { borrar: true });
+    ponerFoto(null);
+    borrarArchivo(uri);
   };
+
+  // ── Borrador: ¿hay uno de esta placa? (después de cargar el equipo)
+  useEffect(() => {
+    if (loadingInitial) return;
+    (async () => {
+      let b = null;
+      try { b = await leerBorrador(placaLimpia); } catch { /* sin borrador */ }
+      let continuo = false;
+      if (b && borradorVigente(b)) {
+        const d = new Date(Number(b.creado) || Date.now());
+        const hhmm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        continuo = await preguntar('Tanqueo sin guardar', [`Tienes un tanqueo sin guardar de las ${hhmm}. ¿Continuar?`], [
+          { texto: 'Descartar', valor: false, estilo: 'destructive' },
+          { texto: 'Continuar', valor: true },
+        ]);
+      }
+      if (continuo) {
+        uuidTanqueo.current = b.uuid || uuidTanqueo.current; // el mismo uuid: guardar nunca duplica
+        setLecturaActual(b.lectura || '');
+        setGalones(b.galones || '');
+        setValor(b.valor || '');
+        setProveedor(b.proveedor || '');
+        setTanqueLleno(b.tanqueLleno !== false);
+        if (b.lecturaConfirmada?.texto) setLecturaConfirmada(b.lecturaConfirmada);
+        if (b.fotoUri && existeArchivo(b.fotoUri)) ponerFoto(b.fotoUri);
+        // Si Android cerró la app con la cámara abierta, la foto que se alcanzó a tomar se recupera
+        try {
+          const p = await ImagePicker.getPendingResultAsync();
+          const a = p && !p.canceled && p.assets?.[0];
+          if (a?.uri) ponerFoto(await guardarFotoTiquete(a.uri, uuidTanqueo.current, a.width));
+        } catch { /* nada pendiente */ }
+      } else if (b) {
+        borrarArchivo(b.fotoUri);
+        try { await borrarBorrador(placaLimpia); } catch { /* se reemplaza al escribir */ }
+      }
+      setListo(true);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadingInitial]);
+
+  // ── Borrador: se guarda mientras se escribe (400 ms después del último cambio)
+  const hayDatos = !!(lecturaActual.trim() || galones.trim() || valor.trim() || proveedor.trim() || foto);
+  const hayDatosRef = useRef(false);
+  hayDatosRef.current = hayDatos;
+  useEffect(() => {
+    if (!listo || guardado.current || descartado.current) return undefined;
+    const t = setTimeout(() => {
+      if (guardado.current || descartado.current) return;
+      const accion = hayDatosRef.current
+        ? guardarBorrador({
+          placa: placaLimpia, uuid: uuidTanqueo.current, viajeUuid, lectura: lecturaActual, galones, valor, proveedor,
+          tanqueLleno, lecturaConfirmada, fotoUri: fotoRef.current,
+        })
+        : borrarBorrador(placaLimpia);
+      accion.catch(() => { /* el borrador es una ayuda: nunca bloquea el formulario */ });
+    }, 400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listo, lecturaActual, galones, valor, proveedor, tanqueLleno, lecturaConfirmada, foto]);
+
+  // ── Salir sin guardar (flecha o Atrás de Android) con datos: confirmar y descartar
+  useEffect(() => navigation.addListener('beforeRemove', (e) => {
+    if (guardado.current || descartado.current || !hayDatosRef.current) return;
+    e.preventDefault();
+    Alert.alert('¿Descartar lo digitado?', 'El tanqueo todavía no se ha guardado.', [
+      { text: 'Seguir editando', style: 'cancel' },
+      {
+        text: 'Descartar', style: 'destructive',
+        onPress: () => {
+          descartado.current = true;
+          borrarArchivo(fotoRef.current);
+          borrarBorrador(placaLimpia).catch(() => {}).finally(() => navigation.dispatch(e.data.action));
+        },
+      },
+    ]);
+  }), [navigation, placaLimpia]);
+
+  // ── Durante un viaje: ¿va en movimiento? (cada 5 s; solo lee, no enciende el GPS)
+  useEffect(() => {
+    if (!viajeUuid) return undefined;
+    let vivo = true;
+    const revisar = async () => {
+      try {
+        const punto = await ultimoPuntoViaje(await getDb(), viajeUuid);
+        let sistema = null;
+        try { sistema = await Location.getLastKnownPositionAsync({ maxAge: 20000 }); } catch { /* sin permiso */ }
+        if (vivo) setEnMovimiento(vaEnMovimiento(velocidadReciente(punto, sistema)));
+      } catch { /* informativo */ }
+    };
+    revisar();
+    const t = setInterval(revisar, 5000);
+    return () => { vivo = false; clearInterval(t); };
+  }, [viajeUuid]);
 
   useEffect(() => {
     async function cargarDatos() {
-      const placaLimpia = (placa || '').trim().toUpperCase();
-
       // 1. CARGA OFFLINE
       try {
         const db = await getDb();
@@ -180,6 +283,17 @@ export default function CombustibleScreen({ route, navigation }) {
     const { precio, avisos } = advertenciasTanqueo(galonesNum, valorPesos, validacion.rango, validacion.capacidad, validacion.margen);
     const rangoTxt = validacion.rango ? ` · esperado ${fmtPesos(validacion.rango.min)}–${fmtPesos(validacion.rango.max)}` : '';
     avisoPrecio = { texto: `${fmtPesos(precio)} por galón${rangoTxt}`, tipo: avisos.length ? 'warn' : 'ok' };
+  }
+
+  // Durante un viaje: el último punto del recorrido si es reciente; si no, la ubicación actual
+  async function ubicacionTanqueo() {
+    if (viajeUuid) {
+      try {
+        const u = ubicacionDePunto(await ultimoPuntoViaje(await getDb(), viajeUuid));
+        if (u) return u;
+      } catch { /* se usa la ubicación actual */ }
+    }
+    return obtenerGPS();
   }
 
   async function obtenerGPS() {
@@ -286,12 +400,11 @@ export default function CombustibleScreen({ route, navigation }) {
 
       setIsSaving(true);
       try {
-        const placaLimpia = (placa || '').trim().toUpperCase();
         // La lectura va solo al contador del equipo (igual que la PWA)
         const valOdo = unidad === 'Km' ? lectura : 0;
         const valHoro = unidad === 'Hrs' ? lectura : 0;
 
-        const gps = await obtenerGPS();
+        const gps = await ubicacionTanqueo();
         const usuario = await AsyncStorage.getItem('userName');
         const db = await getDb();
 
@@ -300,14 +413,14 @@ export default function CombustibleScreen({ route, navigation }) {
           `INSERT INTO tanqueos_pendientes
            (uuid, usuario, placa, cantidad_galones, valor_total, proveedor, tanque_lleno,
             odometro_tanqueo, horometro_tanqueo, fecha, fecha_iso, latitud, longitud, advertencia_confirmada,
-            foto_uri, foto_estado, sync_status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), ?, ?, ?, ?, ?, ?, 'pending')`,
+            foto_uri, foto_estado, viaje_uuid, sync_status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), ?, ?, ?, ?, ?, ?, ?, 'pending')`,
           uuidTanqueo.current, usuario, placaLimpia, galonesNum, valorPesos, proveedor.trim(),
           tanqueLleno ? 1 : 0, valOdo, valHoro, ahoraISO(), gps?.lat ?? null, gps?.lon ?? null, confirmada ? 1 : 0,
-          fotoRef.current, fotoRef.current ? 'pending' : 'sin_foto'
+          fotoRef.current, fotoRef.current ? 'pending' : 'sin_foto', viajeUuid
         );
         guardado.current = true;
-        if (fotoRef.current) soltarFotoFormulario(fotoRef.current); // ya la referencia la fila
+        borrarBorrador(placaLimpia).catch(() => {}); // la foto ya la referencia la fila
 
         // 2. Actualizar la memoria local para el siguiente tanqueo o preoperacional. Solo sube, igual
         //    que el servidor: una lectura menor confirmada no baja el contador (lo decide el admin).
@@ -378,6 +491,22 @@ export default function CombustibleScreen({ route, navigation }) {
         </View>
         <View style={{width: 20}} />
       </View>
+
+      {viajeUuid ? (
+        <View style={styles.franjaViaje}>
+          <FontAwesome5 name="satellite-dish" size={13} color="#bfdbfe" style={{marginRight: 8}} />
+          <Text style={styles.franjaViajeTexto}>Viaje en curso · el recorrido se sigue grabando</Text>
+        </View>
+      ) : null}
+      {enMovimiento ? (
+        <View style={styles.avisoMovimiento}>
+          <FontAwesome5 name="exclamation-triangle" size={18} color="#78350f" style={{marginRight: 10}} />
+          <View style={{flex: 1}}>
+            <Text style={styles.avisoMovimientoTitulo}>Detén el vehículo antes de registrar el tanqueo</Text>
+            <Text style={styles.avisoMovimientoTexto}>El GPS indica que va a más de 10 km/h. Si lo registra un acompañante, puede seguir.</Text>
+          </View>
+        </View>
+      ) : null}
 
       <ScrollView contentContainerStyle={styles.formContainer} keyboardShouldPersistTaps="handled">
         <View style={styles.formGroup}>
@@ -542,6 +671,11 @@ const styles = StyleSheet.create({
   fotoBtnSecText: { color: '#0f172a', fontWeight: '900', fontSize: 15 },
   submitBtn: { backgroundColor: '#10b981', width: '100%', padding: 18, borderRadius: 8, elevation: 3, marginTop: 10, justifyContent: 'center', alignItems: 'center' },
   submitBtnDisabled: { backgroundColor: '#94a3b8', elevation: 0 },
+  franjaViaje: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1e3a8a', paddingVertical: 8, paddingHorizontal: 16 },
+  franjaViajeTexto: { color: '#dbeafe', fontSize: 13, fontWeight: '800' },
+  avisoMovimiento: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fcd34d', paddingVertical: 12, paddingHorizontal: 16 },
+  avisoMovimientoTitulo: { color: '#78350f', fontSize: 15, fontWeight: '900' },
+  avisoMovimientoTexto: { color: '#78350f', fontSize: 12, fontWeight: '600', marginTop: 2 },
   resultadoCard: { borderWidth: 2, borderRadius: 12, padding: 20, marginBottom: 10 },
   resultadoTitulo: { fontSize: 20, fontWeight: '900', textAlign: 'center', marginBottom: 10 },
   resultadoTexto: { fontSize: 15, fontWeight: '600', lineHeight: 21 },

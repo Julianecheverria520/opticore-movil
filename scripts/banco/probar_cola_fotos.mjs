@@ -47,7 +47,7 @@ async function limpiar() {
   llamadas.length = 0;
   subidas.length = 0;
   alSubir = async () => ({ status: 200, body: '{"status":"success"}' });
-  await AS.removeItem('tiquetesEnFormulario');
+  await AS.removeItem('borradoresTanqueo');
 }
 
 async function viajeConPuntos(n = 3) {
@@ -219,16 +219,23 @@ FS.__archivos.set(`${TIQUETES}CON-FILA.jpg`, { size: 1, mtime: hace2h });
 FS.__crear(`${TIQUETES}HUERFANA.jpg`, { mtime: hace2h });
 FS.__crear(`${TIQUETES}RECIENTE.jpg`);
 FS.__crear('file:///cache/foto_camara.jpg');
+const B = await src('borrador.js');
 const enForm = await T.guardarFotoTiquete('file:///cache/foto_camara.jpg', 'FORMULARIO', 4000);
 FS.__archivos.set(enForm, { size: 1, mtime: hace2h }); // formulario abierto hace rato
+await B.guardarBorrador({ placa: 'JMU965', uuid: 'FORMULARIO', galones: '25,5', fotoUri: enForm });
+// Borrador viejo (más de 12 h): su foto ya no se protege
+FS.__crear(`${TIQUETES}VIEJO.jpg`, { mtime: hace2h });
+await AS.setItem('borradoresTanqueo', JSON.stringify({
+  ...JSON.parse(await AS.getItem('borradoresTanqueo')),
+  ABC123: { placa: 'ABC123', uuid: 'VIEJO', fotoUri: `${TIQUETES}VIEJO.jpg`, creado: Date.now() - 13 * 3600000, editado: Date.now() - 13 * 3600000 },
+}));
 const n = await T.limpiarTiquetesHuerfanos(db);
-chk(n === 1 && !FS.__archivos.has(`${TIQUETES}HUERFANA.jpg`), 'huérfana de más de 1 h: se borra');
+chk(!FS.__archivos.has(`${TIQUETES}HUERFANA.jpg`), 'huérfana de más de 1 h: se borra');
 chk(FS.__archivos.has(`${TIQUETES}CON-FILA.jpg`), 'con fila en tanqueos_pendientes: se conserva');
 chk(FS.__archivos.has(`${TIQUETES}RECIENTE.jpg`), 'huérfana reciente (< 1 h): se conserva por si acaso');
-chk(FS.__archivos.has(enForm), 'foto de un formulario abierto: se conserva');
+chk(FS.__archivos.has(enForm), 'foto de un borrador vigente (formulario abierto o app cerrada): se conserva');
+chk(!FS.__archivos.has(`${TIQUETES}VIEJO.jpg`) && n === 2, 'foto de un borrador de más de 12 h: se borra');
 chk(enForm === `${TIQUETES}FORMULARIO.jpg` && !FS.__archivos.has('file:///cache/reducida_1.jpg'), 'guardarFotoTiquete: tiquetes/{uuid}.jpg y borra la reducida temporal');
-await T.soltarFotoFormulario(enForm, { borrar: true });
-chk(!FS.__archivos.has(enForm), 'salir sin guardar: la foto del formulario se borra');
 
 // ── 6. Resultado después de guardar (espera hasta ~8 s) ──────────────────────
 titulo('6. Resultado para el operador');
