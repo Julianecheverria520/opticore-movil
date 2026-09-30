@@ -15,7 +15,9 @@ import { datosValidacion } from '../combustible';
 
 // Números y avisos iguales a la PWA (combustibleNumeros.js): "Se guardará: X" debajo de cada campo,
 // precio por galón con el rango de la empresa y confirmaciones en el mismo orden (lectura ambigua →
-// ¿tanqueo nuevo? → precio y capacidad). Nada bloquea: el servidor vuelve a validar y marca REVISAR.
+// lectura menor que la anterior → ¿tanqueo nuevo? → precio y capacidad). Nada bloquea: el servidor
+// vuelve a validar y marca REVISAR. Una lectura menor tampoco bloquea (odómetro cambiado, lectura
+// anterior inflada por error): se confirma, y el contador del equipo en el celular no baja.
 
 const COLOR_AVISO = { ok: '#065f46', warn: '#b45309', err: '#b91c1c' };
 const SIN_VALIDACION = { rango: null, capacidad: null, margen: 5, fotoModo: 'OPCIONAL', hoy: [] };
@@ -175,8 +177,16 @@ export default function CombustibleScreen({ route, navigation }) {
         lectura = elegida;
         setLecturaConfirmada({ texto: lecturaActual.trim(), valor: elegida });
       }
+      let confirmada = false;
       if (lectura < lecturaBase) {
-        Alert.alert('Lectura Inválida', `❌ La lectura actual no puede ser menor a la anterior (${fmtNum(lecturaBase)} ${unidad}).`); return;
+        const correcta = await preguntar('Lectura menor que la anterior', [
+          `La lectura (${fmtNum(lectura)} ${unidad}) es menor que la anterior (${fmtNum(lecturaBase)} ${unidad}). ¿Es correcta?`,
+        ], [
+          { texto: 'Corregir', valor: false, estilo: 'cancel' },
+          { texto: 'Sí, es correcta', valor: true },
+        ]);
+        if (!correcta) return;
+        confirmada = true;
       }
 
       // 2. ¿Ya hay un tanqueo de este equipo hoy? (el servidor lo marcará como posible duplicado)
@@ -195,7 +205,6 @@ export default function CombustibleScreen({ route, navigation }) {
 
       // 3. Precio/galón y capacidad: advertir y pedir confirmación (no bloquea)
       const { avisos } = advertenciasTanqueo(galonesNum, valorPesos, v.rango, v.capacidad, v.margen);
-      let confirmada = false;
       if (avisos.length) {
         const ok = await preguntar('Revisa los datos del tanqueo', [
           `Galones: ${fmtNum(galonesNum)} · Valor: ${fmtPesos(valorPesos)}`,
@@ -230,11 +239,12 @@ export default function CombustibleScreen({ route, navigation }) {
           tanqueLleno ? 1 : 0, valOdo, valHoro, ahoraISO(), gps?.lat ?? null, gps?.lon ?? null, confirmada ? 1 : 0
         );
 
-        // 2. Actualizar la memoria local para el siguiente tanqueo o preoperacional
+        // 2. Actualizar la memoria local para el siguiente tanqueo o preoperacional. Solo sube, igual
+        //    que el servidor: una lectura menor confirmada no baja el contador (lo decide el admin).
         if (unidad === 'Hrs') {
-          await db.runAsync('UPDATE equipos SET ultimo_horometro = ? WHERE placa = ?', valHoro, placaLimpia);
+          await db.runAsync('UPDATE equipos SET ultimo_horometro = MAX(COALESCE(ultimo_horometro, 0), ?) WHERE placa = ?', valHoro, placaLimpia);
         } else {
-          await db.runAsync('UPDATE equipos SET ultimo_odometro = ? WHERE placa = ?', valOdo, placaLimpia);
+          await db.runAsync('UPDATE equipos SET ultimo_odometro = MAX(COALESCE(ultimo_odometro, 0), ?) WHERE placa = ?', valOdo, placaLimpia);
         }
 
         // 3. Disparar subida
