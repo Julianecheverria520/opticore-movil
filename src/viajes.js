@@ -138,8 +138,9 @@ export const FOTO_COMPRESION = 0.7;
  * con compresión 0.7. Una foto de cámara de 3-6 MB (más de noche, por el ruido) queda
  * típicamente en 250-600 KB y sube en segundos aun con señal débil.
  * anchoOriginal: el que reporta la cámara (si no viene, se mide al procesar).
+ * También la usa la foto del tiquete de tanqueo (src/tiquetes.js).
  */
-async function reducirFoto(uri, anchoOriginal) {
+export async function reducirFoto(uri, anchoOriginal) {
   let ctx = ImageManipulator.manipulate(uri);
   if (anchoOriginal > FOTO_ANCHO_MAX) ctx = ctx.resize({ width: FOTO_ANCHO_MAX });
   let img = await ctx.renderAsync();

@@ -5,3 +5,5 @@
 import { register } from 'node:module';
 
 register('./hooks.mjs', import.meta.url);
+
+globalThis.__DEV__ = false; // src/config.js: API_URL de producción (las pruebas no salen a la red)

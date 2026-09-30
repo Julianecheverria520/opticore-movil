@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Switch, Alert, ActivityIndicator } from 'react-native';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Switch, Alert, ActivityIndicator, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome5 } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { leerToken } from '../sesion';
 import * as Location from 'expo-location';
+import * as ImagePicker from 'expo-image-picker';
 
 import { API_URL } from '../config';
 import { getDb, nuevoUUID, ahoraISO, parseNum, esMaquinaria } from '../database/db';
@@ -12,15 +13,24 @@ import { enviarPendientes } from '../database/syncUp';
 import { fetchConTimeout } from '../red';
 import { parseDecimal, parseMoneda, parseLectura, fmtPesos, fmtNum, advertenciasTanqueo } from '../combustibleNumeros';
 import { datosValidacion } from '../combustible';
+import { guardarFotoTiquete, soltarFotoFormulario } from '../tiquetes';
+import { tamanoKB } from '../viajes';
 
 // Números y avisos iguales a la PWA (combustibleNumeros.js): "Se guardará: X" debajo de cada campo,
 // precio por galón con el rango de la empresa y confirmaciones en el mismo orden (lectura ambigua →
 // lectura menor que la anterior → ¿tanqueo nuevo? → precio y capacidad). Nada bloquea: el servidor
 // vuelve a validar y marca REVISAR. Una lectura menor tampoco bloquea (odómetro cambiado, lectura
 // anterior inflada por error): se confirma, y el contador del equipo en el celular no baja.
+// Foto del tiquete (src/tiquetes.js): se toma aquí y sube DESPUÉS de que el tanqueo quede enviado;
+// según la empresa es opcional, recomendada (pide confirmar sin foto) u obligatoria (sin foto queda por revisar).
 
 const COLOR_AVISO = { ok: '#065f46', warn: '#b45309', err: '#b91c1c' };
 const SIN_VALIDACION = { rango: null, capacidad: null, margen: 5, fotoModo: 'OPCIONAL', hoy: [] };
+const TEXTO_MODO_FOTO = {
+  OBLIGATORIA: 'Obligatoria · sin foto el tanqueo queda por revisar',
+  RECOMENDADA: 'Recomendada · ayuda al administrador a revisar',
+  OPCIONAL: 'Opcional · ayuda al administrador a revisar',
+};
 
 function Aviso({ texto, tipo }) {
   if (!texto) return null;
@@ -58,6 +68,40 @@ export default function CombustibleScreen({ route, navigation }) {
 
   const uuidTanqueo = useRef(nuevoUUID()); // uno por formulario: el servidor no duplica un reenvío
   const procesando = useRef(false);        // tocar Guardar dos veces no abre dos flujos
+
+  // Foto del tiquete: tiquetes/{uuid}.jpg. Si se sale sin guardar, el archivo se borra.
+  const [foto, setFoto] = useState(null);  // { uri, ver, kb }
+  const [tomandoFoto, setTomandoFoto] = useState(false);
+  const fotoRef = useRef(null);
+  const guardado = useRef(false);
+  useEffect(() => () => {
+    if (fotoRef.current && !guardado.current) soltarFotoFormulario(fotoRef.current, { borrar: true });
+  }, []);
+
+  const tomarFoto = async () => {
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') { Alert.alert('Cámara', 'Se necesita permiso de cámara para la foto del tiquete.'); return; }
+      const r = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.5 });
+      if (r.canceled || !r.assets?.length) return;
+      setTomandoFoto(true);
+      const uri = await guardarFotoTiquete(r.assets[0].uri, uuidTanqueo.current, r.assets[0].width);
+      fotoRef.current = uri;
+      setFoto({ uri, ver: Date.now(), kb: tamanoKB(uri) }); // ver: la vista previa no usa la imagen anterior en caché
+    } catch (e) {
+      console.warn('Foto del tiquete:', e?.message || e);
+      Alert.alert('Foto del tiquete', 'No se pudo guardar la foto. Tómala de nuevo.');
+    } finally {
+      setTomandoFoto(false);
+    }
+  };
+
+  const quitarFoto = () => {
+    const uri = fotoRef.current;
+    fotoRef.current = null;
+    setFoto(null);
+    soltarFotoFormulario(uri, { borrar: true });
+  };
 
   useEffect(() => {
     async function cargarDatos() {
@@ -218,6 +262,20 @@ export default function CombustibleScreen({ route, navigation }) {
         confirmada = true;
       }
 
+      // 4. Foto del tiquete: la empresa la recomienda o la exige
+      if (!fotoRef.current && v.fotoModo !== 'OPCIONAL') {
+        const obligatoria = v.fotoModo === 'OBLIGATORIA';
+        const sinFoto = await preguntar(obligatoria ? 'Falta la foto del tiquete' : '¿Guardar sin foto del tiquete?', [
+          obligatoria
+            ? 'La empresa exige la foto del tiquete. Si guardas sin foto, el tanqueo quedará por revisar.'
+            : 'La foto del tiquete ayuda al administrador a revisar el tanqueo sin pedirte el recibo.',
+        ], [
+          { texto: 'Guardar sin foto', valor: true },
+          { texto: 'Tomar foto', valor: false },
+        ]);
+        if (!sinFoto) { tomarFoto(); return; }
+      }
+
       setIsSaving(true);
       try {
         const placaLimpia = (placa || '').trim().toUpperCase();
@@ -233,11 +291,15 @@ export default function CombustibleScreen({ route, navigation }) {
         await db.runAsync(
           `INSERT INTO tanqueos_pendientes
            (uuid, usuario, placa, cantidad_galones, valor_total, proveedor, tanque_lleno,
-            odometro_tanqueo, horometro_tanqueo, fecha, fecha_iso, latitud, longitud, advertencia_confirmada, sync_status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), ?, ?, ?, ?, 'pending')`,
+            odometro_tanqueo, horometro_tanqueo, fecha, fecha_iso, latitud, longitud, advertencia_confirmada,
+            foto_uri, foto_estado, sync_status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), ?, ?, ?, ?, ?, ?, 'pending')`,
           uuidTanqueo.current, usuario, placaLimpia, galonesNum, valorPesos, proveedor.trim(),
-          tanqueLleno ? 1 : 0, valOdo, valHoro, ahoraISO(), gps?.lat ?? null, gps?.lon ?? null, confirmada ? 1 : 0
+          tanqueLleno ? 1 : 0, valOdo, valHoro, ahoraISO(), gps?.lat ?? null, gps?.lon ?? null, confirmada ? 1 : 0,
+          fotoRef.current, fotoRef.current ? 'pending' : 'sin_foto'
         );
+        guardado.current = true;
+        if (fotoRef.current) soltarFotoFormulario(fotoRef.current); // ya la referencia la fila
 
         // 2. Actualizar la memoria local para el siguiente tanqueo o preoperacional. Solo sube, igual
         //    que el servidor: una lectura menor confirmada no baja el contador (lo decide el admin).
@@ -357,6 +419,39 @@ export default function CombustibleScreen({ route, navigation }) {
           <Switch trackColor={{ false: "#cbd5e1", true: "#047857" }} thumbColor={tanqueLleno ? "#10b981" : "#f1f5f9"} value={tanqueLleno} onValueChange={setTanqueLleno} />
         </View>
 
+        <View style={styles.fotoCard}>
+          <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 4}}>
+            <FontAwesome5 name="receipt" size={16} color="#475569" style={{marginRight: 8}} />
+            <Text style={[styles.formLabel, {marginBottom: 0}]}>Foto del tiquete</Text>
+          </View>
+          <Text style={styles.fotoSub}>{TEXTO_MODO_FOTO[validacion.fotoModo] || TEXTO_MODO_FOTO.OPCIONAL}</Text>
+          {foto ? (
+            <>
+              <Image source={{ uri: `${foto.uri}?v=${foto.ver}` }} style={styles.fotoPreview} resizeMode="contain" />
+              <Text style={[styles.valorPreview, { color: COLOR_AVISO.ok }]}>Se enviará después de guardar{foto.kb != null ? ` (${foto.kb} KB)` : ''}</Text>
+              <View style={{flexDirection: 'row', marginTop: 10}}>
+                <TouchableOpacity style={[styles.fotoBtnSec, {marginRight: 10}]} onPress={tomarFoto} disabled={tomandoFoto || isSaving}>
+                  <FontAwesome5 name="camera" size={14} color="#0f172a" style={{marginRight: 6}} />
+                  <Text style={styles.fotoBtnSecText}>Cambiar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.fotoBtnSec} onPress={quitarFoto} disabled={tomandoFoto || isSaving}>
+                  <FontAwesome5 name="trash-alt" size={14} color="#b91c1c" style={{marginRight: 6}} />
+                  <Text style={[styles.fotoBtnSecText, {color: '#b91c1c'}]}>Quitar</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          ) : (
+            <TouchableOpacity style={styles.fotoBtn} onPress={tomarFoto} disabled={tomandoFoto || isSaving}>
+              {tomandoFoto ? <ActivityIndicator color="#ffffff" /> : (
+                <>
+                  <FontAwesome5 name="camera" size={16} color="#ffffff" style={{marginRight: 8}} />
+                  <Text style={styles.fotoBtnText}>Tomar foto del tiquete</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
+        </View>
+
         <TouchableOpacity style={[styles.submitBtn, isSaving && styles.submitBtnDisabled]} onPress={procesarGuardadoOffline} disabled={isSaving}>
           {isSaving ? (
             <ActivityIndicator color="#ffffff" />
@@ -401,6 +496,13 @@ const styles = StyleSheet.create({
   diffError: { backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#f87171' },
   toggleContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#ffffff', paddingVertical: 18, paddingHorizontal: 15, borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e1', marginBottom: 20 },
   toggleLabel: { fontWeight: '800', color: '#1e293b', fontSize: 16 },
+  fotoCard: { backgroundColor: '#ffffff', borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e1', padding: 15, marginBottom: 20 },
+  fotoSub: { fontSize: 13, color: '#64748b', marginBottom: 12 },
+  fotoBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#1e40af', padding: 15, borderRadius: 8 },
+  fotoBtnText: { color: '#ffffff', fontSize: 16, fontWeight: '900' },
+  fotoPreview: { width: '100%', height: 220, borderRadius: 8, backgroundColor: '#f1f5f9' },
+  fotoBtnSec: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#e2e8f0', padding: 12, borderRadius: 8 },
+  fotoBtnSecText: { color: '#0f172a', fontWeight: '900', fontSize: 15 },
   submitBtn: { backgroundColor: '#10b981', width: '100%', padding: 18, borderRadius: 8, elevation: 3, marginTop: 10, justifyContent: 'center', alignItems: 'center' },
   submitBtnDisabled: { backgroundColor: '#94a3b8', elevation: 0 },
   submitBtnText: { color: '#ffffff', fontSize: 19, fontWeight: '900' }

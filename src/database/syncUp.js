@@ -6,6 +6,7 @@ import { API_URL } from '../config';
 import { existeArchivo, borrarArchivo, subirArchivo, tamanoKB } from '../viajes';
 import { ahoraISO } from './db';
 import { lotePendiente } from '../gps/puntos';
+import { enviarFotosTiquete, limpiarTiquetesHuerfanos, resumenFotosTiquete } from '../tiquetes';
 
 const RUTA_PREOP = '/maestros/equipos/preoperacional/guardar';
 // E1 · El endpoint ya existía en el servidor. Requiere el backend con E5 (idempotencia
@@ -52,6 +53,9 @@ function payloadTanqueo(r) {
     observaciones: r.observaciones || '',
     // v11 · el operador vio la advertencia de precio/capacidad y confirmó (el servidor lo anota en el motivo)
     advertencia_confirmada: !!r.advertencia_confirmada,
+    // v11 · la foto del tiquete sube después, aparte (src/tiquetes.js). Con foto OBLIGATORIA, un
+    // tanqueo sin foto anunciada queda por revisar; cuando llega la foto, el servidor quita ese motivo.
+    con_foto: !!r.foto_estado && r.foto_estado !== 'sin_foto',
   };
 }
 
@@ -378,8 +382,17 @@ async function procesarViajes(db, token, usuario, opciones = {}) {
  * Sube la cola. opciones.forzarFotos: reintenta también las fotos en pausa (botón "Enviar ahora").
  * Con un 401 devuelve { sesionExpirada: true } y NO borra nada:
  * la pantalla decide pedir credenciales sin sacar al operador de la app (E3).
+ *
+ * v11 · Al terminar, y ya sin el candado de la cola, lanza la tanda de fotos de tiquetes (sin
+ * esperarla: su propio candado). Una foto lenta nunca deja "omitida" la subida de puntos del GPS.
  */
 export async function enviarPendientes(opciones = {}) {
+  const r = await enviarCola(opciones);
+  if (!r.omitido && !r.sinRed && !r.sesionExpirada) enviarFotosTiquete(opciones).catch(() => {});
+  return r;
+}
+
+async function enviarCola(opciones) {
   if (enviando) return { omitido: true };
   enviando = true;
   try {
@@ -393,22 +406,31 @@ export async function enviarPendientes(opciones = {}) {
     const db = await getDb();
     const total = { enviados: 0, errores: 0 };
 
+    // v11 · Si una cola (preoperacionales o tanqueos) se queda sin respuesta o el servidor falla,
+    // se detiene SOLO esa cola: la pasada sigue con los viajes, para que un tanqueo nunca frene los
+    // puntos del recorrido. Un 401 sí detiene todo (la sesión vale para todas).
+    let detenida = null;
     for (const cola of COLAS) {
       if (!cola.ruta) continue;
       const r = await procesarCola(db, cola, token, usuario);
       total.enviados += r.enviados;
       total.errores += r.errores;
-      if (r.sinRed || r.sesionExpirada || r.servidorNoDisponible) return { ...r, enviados: total.enviados, errores: total.errores };
+      if (r.sesionExpirada) return { ...r, enviados: total.enviados, errores: total.errores };
+      if ((r.sinRed || r.servidorNoDisponible) && !detenida) detenida = r;
     }
 
     const rv = await procesarViajes(db, token, usuario, opciones);
     total.enviados += rv.enviados;
     total.errores += rv.errores;
     if (rv.sinRed || rv.sesionExpirada || rv.servidorNoDisponible) return { ...rv, enviados: total.enviados, errores: total.errores };
+    if (detenida) return { sinRed: !!detenida.sinRed, servidorNoDisponible: !!detenida.servidorNoDisponible, enviados: total.enviados, errores: total.errores };
 
     for (const { tabla } of COLAS) {
-      await db.runAsync(`DELETE FROM ${tabla} WHERE sync_status = 'synced' AND fecha < datetime('now','-14 days','localtime')`);
+      // Un tanqueo con la foto del tiquete por enviar no se borra (la foto se asocia por su uuid)
+      const conFoto = tabla === 'tanqueos_pendientes' ? " AND COALESCE(foto_estado, 'sin_foto') <> 'pending'" : '';
+      await db.runAsync(`DELETE FROM ${tabla} WHERE sync_status = 'synced' AND fecha < datetime('now','-14 days','localtime')${conFoto}`);
     }
+    try { await limpiarTiquetesHuerfanos(db); } catch (e) { console.warn('Limpieza de tiquetes:', e?.message || e); }
     await db.runAsync(`DELETE FROM puntos_gps WHERE viaje_uuid IN (SELECT uuid FROM viajes_locales WHERE sync_status IN ('synced', 'descartado') AND fecha < datetime('now','-14 days','localtime'))`);
     await db.runAsync(`DELETE FROM viajes_locales WHERE sync_status IN ('synced', 'descartado') AND fecha < datetime('now','-14 days','localtime')`);
     return total;
@@ -438,7 +460,10 @@ export async function contarPendientes() {
     `SELECT COUNT(*) AS n FROM viajes_locales
       WHERE sync_status <> 'descartado' AND (sync_status = 'error' OR sync_foto_inicio = 'error' OR sync_foto_fin = 'error')`
   );
-  return { pendientes: (await contar('pending')) + (vp?.n || 0), errores: (await contar('error')) + (ve?.n || 0) };
+  // Las fotos de tiquetes van aparte (tarjeta propia en Home): no cuentan como "por enviar" del viaje
+  let fotos = { pendientes: 0, errores: 0, esperandoTanqueo: 0, ultimo: null };
+  try { fotos = await resumenFotosTiquete(db); } catch { /* solo informativo */ }
+  return { pendientes: (await contar('pending')) + (vp?.n || 0), errores: (await contar('error')) + (ve?.n || 0), fotos };
 }
 
 /**

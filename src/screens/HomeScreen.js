@@ -15,6 +15,7 @@ import { API_URL } from '../config';
 import { fetchConTimeout } from '../red';
 import { viajeEnCurso, viajesConProblema, viajesAbiertosAjenos, describirAjenos } from '../viajes';
 import { asegurarGPS } from '../gps/control';
+import { esperarFotosTiquete, reintentarFotosTiquete } from '../tiquetes';
 
 // Equipo recordado: la última placa validada en este celular (se borra con "Cambiar" y "Salir")
 const CLAVE_EQUIPO = 'equipoRecordado';
@@ -298,6 +299,52 @@ export default function HomeScreen({ navigation }) {
     </TouchableOpacity>
   ) : null;
 
+  // Fotos de tiquetes (v11): tarjeta propia, solo si hay alguna por enviar o con error
+  const [enviandoFotos, setEnviandoFotos] = useState(false);
+  const fotos = pendientes.fotos;
+  const enviarFotos = async (reintentar) => {
+    setEnviandoFotos(true);
+    try {
+      if (reintentar) await reintentarFotosTiquete();
+      await enviarPendientes({ forzarFotos: true });
+      await esperarFotosTiquete();
+    } catch { /* el diagnóstico queda en la tarjeta */ }
+    finally {
+      try { setPendientes(await contarPendientes()); } catch {}
+      setEnviandoFotos(false);
+    }
+  };
+  let diagFotos = null;
+  if (fotos?.ultimo) {
+    const d = fotos.ultimo;
+    diagFotos = `Último intento ${String(d.hora || '').slice(11, 16)} (${d.placa}): ${d.codigo} · ${d.mensaje}`;
+  } else if (fotos?.esperandoTanqueo) {
+    diagFotos = 'Se envían después de que llegue el tanqueo.';
+  }
+  const avisoFotos = fotos && (fotos.pendientes > 0 || fotos.errores > 0) ? (
+    <View style={styles.tarjetaFotos}>
+      <View style={styles.rowCenter}>
+        <FontAwesome5 name="receipt" size={15} color="#0f172a" />
+        <Text style={[styles.bannerTitulo, { marginLeft: 8, flex: 1 }]}>
+          Fotos de tiquetes{fotos.pendientes > 0 ? ` · ${fotos.pendientes} por enviar` : ''}{fotos.errores > 0 ? ` · ${fotos.errores} con error` : ''}
+        </Text>
+      </View>
+      {diagFotos ? <Text style={styles.bannerTexto} selectable>{diagFotos}</Text> : null}
+      <View style={[styles.row, { marginTop: 10, marginBottom: 0 }]}>
+        {fotos.pendientes > 0 ? (
+          <TouchableOpacity style={styles.btnFotos} onPress={() => enviarFotos(false)} disabled={enviandoFotos}>
+            {enviandoFotos ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.btnFotosTexto}>Enviar ahora</Text>}
+          </TouchableOpacity>
+        ) : null}
+        {fotos.errores > 0 ? (
+          <TouchableOpacity style={[styles.btnFotos, { backgroundColor: '#b91c1c' }]} onPress={() => enviarFotos(true)} disabled={enviandoFotos}>
+            {enviandoFotos ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.btnFotosTexto}>Reintentar</Text>}
+          </TouchableOpacity>
+        ) : null}
+      </View>
+    </View>
+  ) : null;
+
   const avisoAjenos = ajenos.length ? (
     <TouchableOpacity style={styles.bannerAjenos} onPress={() => Alert.alert('Viajes abiertos en el sistema', describirAjenos(ajenos))}>
       <FontAwesome5 name="exclamation-circle" size={16} color="#0f172a" />
@@ -344,6 +391,7 @@ export default function HomeScreen({ navigation }) {
           {avisoViaje}
           {avisoProblema}
           {avisoAjenos}
+          {avisoFotos}
           <TouchableOpacity style={styles.btnQrGiant} onPress={() => { setScanned(false); setShowCamera(true); }}>
             <FontAwesome5 name="qrcode" size={40} color="#fff" style={{ marginBottom: 15 }} />
             <Text style={styles.btnQrTextGiant}>Escanear Código QR</Text>
@@ -403,6 +451,7 @@ export default function HomeScreen({ navigation }) {
         {avisoViaje}
         {avisoProblema}
         {avisoAjenos}
+        {avisoFotos}
 
         <View style={styles.equipoCard}>
           <View style={styles.equipoIconWrap}><FontAwesome5 name={equipoActual.usaHoras ? 'tractor' : 'truck'} size={28} color="#fff" /></View>
@@ -476,6 +525,9 @@ const styles = StyleSheet.create({
   bannerProblema: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#dc2626', borderRadius: 12, padding: 14, marginBottom: 15 },
   bannerAjenos: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fdba74', borderRadius: 12, padding: 14, marginBottom: 15 },
   bannerTexto: { color: '#1e293b', fontSize: 12, marginTop: 2 },
+  tarjetaFotos: { backgroundColor: '#bfdbfe', borderRadius: 12, padding: 14, marginBottom: 15 },
+  btnFotos: { flex: 1, backgroundColor: '#1e40af', paddingVertical: 11, borderRadius: 8, alignItems: 'center' },
+  btnFotosTexto: { color: '#fff', fontWeight: '900', fontSize: 14 },
   btnCerrarModal: { position: 'absolute', top: 50, right: 20, backgroundColor: '#1e293b', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8 },
   btnCerrarModalText: { color: '#fff', fontWeight: 'bold' },
   equipoCard: { backgroundColor: '#1e293b', borderRadius: 16, padding: 20, marginBottom: 15, flexDirection: 'row', alignItems: 'center' },
