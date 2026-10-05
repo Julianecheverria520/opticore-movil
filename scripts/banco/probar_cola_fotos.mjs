@@ -29,7 +29,7 @@ const llamadas = [];
 let rutas = {};
 const resp = (status, body = {}) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
 globalThis.fetch = async (url, opts = {}) => {
-  const ruta = url.replace('https://opticore-ia.com', '');
+  const ruta = url.replace('https://app.opticore-ia.com', '');
   llamadas.push({ ruta, body: opts.body ? JSON.parse(opts.body) : null });
   for (const [patron, fn] of Object.entries(rutas)) if (ruta.includes(patron)) return fn(ruta, opts);
   return resp(404, { detail: 'sin ruta' });
@@ -113,7 +113,7 @@ chk(res.fotos.pendientes === 1 && res.fotos.esperandoTanqueo === 1 && res.pendie
 rutas = { '/combustible/guardar': () => resp(200, { status: 'success' }) };
 await pasada();
 chk(llamadas.filter((l) => l.ruta.includes('/guardar')).pop().body.con_foto === true, 'payload con_foto=true');
-chk(subidas.length === 1 && subidas[0].url === 'https://opticore-ia.com/movil/combustible/T2/foto' && subidas[0].uri === uri2,
+chk(subidas.length === 1 && subidas[0].url === 'https://app.opticore-ia.com/movil/combustible/T2/foto' && subidas[0].uri === uri2,
   'foto subida a /movil/combustible/{uuid}/foto');
 let f = await fila('T2');
 chk(f.foto_estado === 'synced' && !FS.__archivos.has(uri2), 'foto enviada: synced y el archivo se borra del celular');
