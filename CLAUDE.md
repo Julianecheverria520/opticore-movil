@@ -37,3 +37,24 @@ Si la prueba depende de un backend todavía no desplegado, indicar que se hace c
 - Al arrancar, el backend registra `ESQUEMA: FALTAN … COLUMNA(S)` en el log si el modelo tiene
   columnas que la base no (`core/verificar_esquema.py`). Después de cada despliegue, revisar
   que no aparezca.
+
+## Regla: actualizaciones OTA (EAS Update) vs APK nuevo
+
+- `runtimeVersion` usa la política `appVersion`: una actualización OTA solo llega a los APK con la misma `version`
+  de `app.json`.
+- Cambio **solo JS** (lógica, pantallas, textos, estilos, imágenes cargadas desde JS, `src/config.js`): va por OTA con
+  `npx eas-cli update --channel <perfil> --environment <perfil> -m "…"`. **NO subir `version`** en `app.json`: si se
+  sube, la actualización ya no llega a los celulares instalados.
+- Exige **APK nuevo y subir `version`** (p. ej. 1.4.0 → 1.5.0): permisos, plugins o cualquier otro cambio de
+  `app.json`/`app.config.js` (íconos, splash, nombre), instalar o actualizar una librería con código nativo
+  (`npx expo install …`, incluidas las de Expo), actualizar el SDK, config plugins (`plugins/`).
+- Antes de publicar en `production`, publicar y probar en `preview`. Nunca publicar ni lanzar build sin confirmación
+  de Julián.
+
+## Regla: migraciones SQLite solo aditivas
+
+- Las migraciones de `src/database/db.js` (`MIGRACIONES`, `PRAGMA user_version`) solo pueden **agregar** tablas o
+  columnas (con valor por defecto o NULL). Nunca borrar, renombrar ni cambiar el tipo o el significado de una columna.
+- Motivo: con OTA, un rollback devuelve un JS más viejo sobre una base ya migrada. El JS viejo se salta las
+  versiones que no conoce y debe seguir funcionando con las columnas de más. Por la misma razón, las consultas
+  nombran sus columnas (nada de `INSERT` sin lista de columnas).

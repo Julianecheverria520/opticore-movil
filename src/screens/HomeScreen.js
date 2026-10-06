@@ -16,6 +16,7 @@ import { fetchConTimeout } from '../red';
 import { viajeEnCurso, viajesConProblema, viajesAbiertosAjenos, describirAjenos } from '../viajes';
 import { asegurarGPS } from '../gps/control';
 import { esperarFotosTiquete, reintentarFotosTiquete, descartarFotosTiquete } from '../tiquetes';
+import { revisarActualizacion, describirVersion } from '../actualizaciones';
 
 // Equipo recordado: la última placa validada en este celular (se borra con "Cambiar" y "Salir")
 const CLAVE_EQUIPO = 'equipoRecordado';
@@ -42,6 +43,8 @@ export default function HomeScreen({ navigation }) {
   const [lastSync, setLastSync] = useState('Nunca');
   const [estadoRed, setEstadoRed] = useState('ok');
   const [pedirLogin, setPedirLogin] = useState(false);
+  // OTA: true si ya hay una actualización descargada que entra al reabrir la app
+  const { isUpdatePending } = Updates.useUpdates();
 
   // Estado de la cola de envíos
   const [pendientes, setPendientes] = useState({ pendientes: 0, errores: 0 });
@@ -118,6 +121,9 @@ export default function HomeScreen({ navigation }) {
       await sincronizarFondo();
       // Primer uso sin equipos descargados: se reintenta con la lista recién bajada
       if (!restaurado && !equipoRef.current) await restaurarEquipo();
+
+      // OTA: solo con señal y sin viaje en curso; se aplica en el siguiente arranque en frío
+      revisarActualizacion({ forzar: true });
     }
 
     inicializar();
@@ -132,6 +138,7 @@ export default function HomeScreen({ navigation }) {
       asegurarGPS().catch(() => {});
       refrescarViaje();
       enviarPendientes().then(async () => setPendientes(await contarPendientes())).catch(() => {});
+      revisarActualizacion();
     });
 
     return () => { cancelar(); subApp.remove(); }; // Limpia los listeners si la pantalla se desmonta
@@ -436,6 +443,7 @@ export default function HomeScreen({ navigation }) {
               </View>
             </View>
           </Modal>
+          <Text style={styles.textoVersion}>{describirVersion()}{isUpdatePending ? ' · actualización lista: se aplica al volver a abrir la app' : ''}</Text>
           {modalLogin}
         </View>
       </SafeAreaView>
@@ -511,6 +519,7 @@ export default function HomeScreen({ navigation }) {
             <FontAwesome5 name="chevron-right" size={12} color="#fff" style={styles.chevronPos} />
           </TouchableOpacity>
         </View>
+        <Text style={styles.textoVersion}>{describirVersion()}{isUpdatePending ? ' · actualización lista: se aplica al volver a abrir la app' : ''}</Text>
       </ScrollView>
       {modalLogin}
     </SafeAreaView>
@@ -570,4 +579,5 @@ const styles = StyleSheet.create({
   cameraContainer: { flex: 1, justifyContent: 'flex-end' },
   cameraOverlay: { position: 'absolute', bottom: 40, left: 20, right: 20, alignItems: 'center' },
   btnCloseCamera: { backgroundColor: '#ef4444', padding: 15, borderRadius: 8, width: '100%', alignItems: 'center' },
+  textoVersion: { color: '#64748b', fontSize: 11, textAlign: 'center', marginTop: 16 },
 });

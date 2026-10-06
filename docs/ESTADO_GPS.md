@@ -148,7 +148,9 @@ ver `ESTADO_COMBUSTIBLE.md` §5.4). Lo de abajo es el build 1.1.1.
 
 Verificado con `npx expo config --type introspect` (sin `APP_VARIANT`): paquete `com.julianecheverria.opticoremovil`, versión **1.1.1** (versionCode lo lleva EAS: `appVersionSource: remote` + `autoIncrement`; el `preview` 1.1.0 code 2 de `e842310` no tiene las fallas previas, el siguiente sale con code 3),
 permisos `RECEIVE_BOOT_COMPLETED`, `POST_NOTIFICATIONS`, `ACCESS_FINE/COARSE/BACKGROUND_LOCATION`, `FOREGROUND_SERVICE(_LOCATION)`, `CAMERA`; `RECORD_AUDIO` removido.
-`expo-location`, `expo-task-manager`, `expo-image-manipulator` en dependencias. En release `__DEV__` es falso → `API_URL` = `https://opticore-ia.com`.
+`expo-location`, `expo-task-manager`, `expo-image-manipulator` en dependencias. En release `__DEV__` es falso → `API_URL` = `PRODUCCION` de `src/config.js`.
+
+**Servidor movido (2026-10-05, `69c9b22`)**: `PRODUCCION` = `https://app.opticore-ia.com` (antes `https://opticore-ia.com`). Según Julián, el APK preview 1.3.0 de la rama `dominio-app` ya se generó con esa URL. `dominio-app` se integró a `main` por avance directo el 2026-10-06 (sin push).
 
 ```
 npx eas-cli build -p android --profile preview
@@ -156,3 +158,16 @@ npx eas-cli build -p android --profile preview
 
 Se instala **encima** del piloto v1 (mismo paquete y firma de EAS): conserva la base local y la migra.
 
+## 8. Actualizaciones OTA (EAS Update) · app 1.4.0 (rama `ota`, sin push)
+
+- `app.json`: `version` 1.4.0, `runtimeVersion: { policy: "appVersion" }` (runtime = `version`), `updates.url` =
+  `https://u.expo.dev/797f04b6-3b0c-4fa7-9c13-44c826a9ce03`, `checkAutomatically: "NEVER"`, `fallbackToCacheTimeout: 0`.
+- `eas.json`: canal por perfil (`development`, `preview`, `production`). EAS escribe el canal en el APK al compilar.
+- `src/actualizaciones.js`: Home revisa al abrir (y al volver al frente, máx. cada 30 min) **solo con señal y sin viaje
+  EN_CURSO**; descarga en segundo plano y **nunca recarga**: entra en el siguiente arranque en frío. La tarea GPS no pasa
+  por Home → nunca descarga. "Salir" hace `reloadAsync` y aplica lo descargado (acción del usuario).
+- Home muestra abajo `v1.4.0 · APK` o `v1.4.0 · act. <id> (<fecha>)`, y "actualización lista" si hay una descargada.
+- Los APK 1.3.0 y anteriores **no** reciben OTA (expo-updates iba apagado): hay que instalar la 1.4.0 una vez.
+- Publicar: `npx eas-cli update --channel preview --environment preview -m "…"`. Rollback: `npx eas-cli update:rollback`.
+- Reglas (OTA vs APK nuevo, migraciones solo aditivas): en `CLAUDE.md`.
+- Pendiente: build preview 1.4.0 (cuando Julián confirme) y la prueba del texto en Home + reversión.
