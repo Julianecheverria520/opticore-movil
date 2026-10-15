@@ -1,16 +1,18 @@
 // src/components/MapaRecorrido.js · mapa del viaje a pantalla completa (MapLibre)
 // Solo LEE: los puntos de SQLite (funciona sin señal), la ruta de los maestros (con su ruta
 // planeada punteada y los peajes, si el servidor la calculó) y la última ubicación conocida del
-// sistema. No arranca GPS propio ni toca la tarea 'opticore-gps'
-// ni la cola de envío.
-// Batería: refresca como máximo cada 10 s y SOLO con la app al frente y la pantalla del
-// viaje visible (prop `activo`); con la pantalla apagada o en segundo plano no hace nada.
+// sistema. No toca la tarea 'opticore-gps' ni la cola de envío.
+// Modo navegación (viaje EN_CURSO): la cámara sigue al vehículo con el seguimiento nativo de
+// MapLibre (inclinada y girando con la marcha) y una flecha nativa marca la posición. Ese
+// seguimiento enciende la ubicación del mapa, por eso SOLO va con la app al frente, la pantalla
+// del viaje visible (prop `activo`) y el modo navegación; si no, se apaga y se desmonta la flecha.
+// Batería: los puntos se releen como máximo cada 10 s y con las mismas condiciones.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, AppState, useColorScheme } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import * as Location from 'expo-location';
 import { FontAwesome5 } from '@expo/vector-icons';
-import { Map, Camera, GeoJSONSource, Layer, Marker } from '@maplibre/maplibre-react-native';
+import { Map, Camera, GeoJSONSource, Layer, Marker, NativeUserLocation } from '@maplibre/maplibre-react-native';
 
 import { MAPA_FONDOS } from '../config';
 import { getDb } from '../database/db';
@@ -21,6 +23,10 @@ import { datosRutaPlaneada, formatoPesos } from '../rutaPlaneada';
 const REFRESCO_MS = 10000;       // como máximo cada 10 s
 const MAX_PUNTOS_LINEA = 2000;   // más que esto se simplifica (solo el dibujo)
 const ZOOM_SEGUIR = 15;
+const NAV_ZOOM = 17;             // si a velocidad de carretera se ve muy cerca, probar 16
+const NAV_PITCH = 55;
+const NAV_ANIM_MS = 700;         // inclinar/acercar antes de encender el seguimiento
+const INSET_CERO = { top: 0, right: 0, bottom: 0, left: 0 };
 
 function estiloFondo(tema) {
   const f = MAPA_FONDOS[tema] || MAPA_FONDOS.claro;
@@ -74,14 +80,22 @@ function vistaInicial(coords, padding) {
  * superior y del panel inferior, para no tapar controles ni el encuadre).
  */
 export default function MapaRecorrido({ viaje, activo = true, margenSup = 0, margenInf = 0 }) {
+  const enCurso = viaje.estado_local === 'EN_CURSO';
   const temaSistema = useColorScheme();
   const [tema, setTema] = useState(temaSistema === 'dark' ? 'oscuro' : 'claro');
   const [listo, setListo] = useState(false);
   const [version, setVersion] = useState(0);     // cambia cuando llegan puntos nuevos
   const [sinSenal, setSinSenal] = useState(false);
   const [falloFondo, setFalloFondo] = useState(false);
-  const [siguiendo, setSiguiendo] = useState(viaje.estado_local === 'EN_CURSO');
   const [appActiva, setAppActiva] = useState(AppState.currentState === 'active');
+  // navegacion: sigue al vehículo · libre: el conductor movió el mapa · general: toda la ruta
+  const [modo, setModo] = useState(enCurso ? 'navegacion' : 'general');
+  const [permiso, setPermiso] = useState(null);          // ubicación en primer plano
+  const [estiloListo, setEstiloListo] = useState(false);
+  const [trackListo, setTrackListo] = useState(false);   // ya se inclinó/acercó la cámara
+  const [pedidoGeneral, setPedidoGeneral] = useState(0); // "Ver ruta completa" pendiente
+  const [alto, setAlto] = useState(0);
+  const [altoLeyenda, setAltoLeyenda] = useState(0);
 
   const linea = useRef([]);          // [[lon, lat], ...] acumulado
   const ultimoSeq = useRef(0);
@@ -89,22 +103,30 @@ export default function MapaRecorrido({ viaje, activo = true, margenSup = 0, mar
   const ruta = useRef(RUTA_VACIA);
   const posicion = useRef(null);
   const vista = useRef(null);
-  const seqCentrado = useRef(0);     // último punto al que ya se recentró
   const camara = useRef(null);
-  const siguiendoRef = useRef(siguiendo);
-  siguiendoRef.current = siguiendo;
+  const encuadreNav = useRef(false);   // inclinar/acercar al entrar en navegación
+  const generalHecho = useRef(0);
   const viajeRef = useRef(viaje); // la pantalla crea un objeto nuevo cada 10 s: solo importa el uuid
   viajeRef.current = viaje;
 
   const padding = useMemo(() => ({ top: margenSup + 30, right: 40, bottom: margenInf + 30, left: 40 }), [margenSup, margenInf]);
+  // Navegación: el vehículo en el tercio inferior para ver el trayecto por delante
+  const insetNav = useMemo(() => {
+    const visible = Math.max(0, alto - margenSup - margenInf);
+    return { top: Math.round(margenSup + visible * 0.4), right: 0, bottom: margenInf + 30, left: 0 };
+  }, [alto, margenSup, margenInf]);
 
-  // zoom = null: solo mueve el centro y respeta el zoom que eligió el conductor
-  const centrarEn = useCallback((coord, zoom = null) => {
-    if (!coord) return;
-    const op = { center: coord, duration: 800, padding };
-    if (zoom != null) op.zoom = zoom;
-    try { camara.current?.easeTo(op); } catch { /* cámara aún no lista */ }
-  }, [padding]);
+  const navegable = enCurso && permiso !== false;
+  // El seguimiento nativo espera a que el estilo cargue: si la cámara se monta ya siguiendo,
+  // MapLibre deja encendida una ubicación propia que no apaga al dejar de seguir
+  const navActiva = navegable && permiso === true && modo === 'navegacion' && estiloListo && activo && appActiva;
+  const seguir = navActiva && trackListo;
+  const seguirRef = useRef(false);
+  seguirRef.current = seguir;
+
+  const mover = useCallback((fn) => {
+    try { fn(camara.current)?.catch?.(() => {}); } catch { /* cámara aún no lista */ }
+  }, []);
 
   const cargar = useCallback(async () => {
     try {
@@ -125,17 +147,20 @@ export default function MapaRecorrido({ viaje, activo = true, margenSup = 0, mar
     }
   }, []);
 
-  // Primera carga: ruta + puntos, y con eso el encuadre inicial (todo el recorrido)
+  // Primera carga: ruta + puntos. En curso se abre en navegación sobre la posición; si no,
+  // encuadra todo (recorrido, ruta planeada, origen, destino y posición)
   useEffect(() => {
     let vivo = true;
     (async () => {
       ruta.current = await rutaDelViaje(viajeRef.current).catch(() => RUTA_VACIA);
       await cargar();
       if (!vivo) return;
-      // Al abrir se encuadra todo: recorrido, ruta planeada, origen, destino y posición
       const todo = [...linea.current, ...ruta.current.planeada, ruta.current.origen, ruta.current.destino, posicion.current].filter(Boolean);
-      vista.current = vistaInicial(todo, padding);
-      seqCentrado.current = ultimoSeq.current; // al abrir se ve todo el recorrido
+      const nav = viajeRef.current.estado_local === 'EN_CURSO';
+      vista.current = nav && posicion.current
+        ? { center: posicion.current, zoom: NAV_ZOOM, pitch: NAV_PITCH }
+        : vistaInicial(todo, padding);
+      encuadreNav.current = nav && !posicion.current;
       setListo(true);
     })();
     return () => { vivo = false; };
@@ -147,7 +172,20 @@ export default function MapaRecorrido({ viaje, activo = true, margenSup = 0, mar
     return () => sub.remove();
   }, []);
 
-  // Refresco cada 10 s, solo con la app al frente y la pantalla visible
+  useEffect(() => {
+    Location.getForegroundPermissionsAsync()
+      .then((p) => setPermiso(p.status === 'granted'))
+      .catch(() => setPermiso(false));
+  }, []);
+
+  // Respaldo por si el evento de estilo cargado no llega
+  useEffect(() => {
+    if (!listo) return undefined;
+    const t = setTimeout(() => setEstiloListo(true), 2000);
+    return () => clearTimeout(t);
+  }, [listo]);
+
+  // Refresco cada 10 s, solo con la app al frente y la pantalla visible (dibuja la línea)
   useEffect(() => {
     if (!listo || !activo || !appActiva) return undefined;
     cargar();
@@ -155,13 +193,42 @@ export default function MapaRecorrido({ viaje, activo = true, margenSup = 0, mar
     return () => clearInterval(t);
   }, [listo, activo, appActiva, cargar]);
 
-  // Seguir la posición actual (hasta que el conductor mueva el mapa con el dedo): solo
-  // cuando llega un punto nuevo, sin cambiar el zoom
+  // Entrar en navegación: primero inclina y acerca, después enciende el seguimiento (si se
+  // encendiera a la vez, cada paso de la flecha cortaría la animación a medias)
   useEffect(() => {
-    if (!listo || !siguiendoRef.current || ultimoSeq.current === seqCentrado.current) return;
-    seqCentrado.current = ultimoSeq.current;
-    centrarEn(posicion.current);
-  }, [version, listo, centrarEn]);
+    if (!navActiva) { setTrackListo(false); return undefined; }
+    if (!encuadreNav.current) { setTrackListo(true); return undefined; }
+    encuadreNav.current = false;
+    setTrackListo(false);
+    const op = { zoom: NAV_ZOOM, pitch: NAV_PITCH, duration: NAV_ANIM_MS };
+    const c = posicion.current;
+    mover((cam) => (c ? cam.easeTo({ ...op, center: c }) : cam.setStop({ ...op, easing: 'ease' })));
+    const t = setTimeout(() => setTrackListo(true), NAV_ANIM_MS + 100);
+    return () => clearTimeout(t);
+  }, [navActiva, mover]);
+
+  // Sin permiso de ubicación o viaje que ya no está en curso: vista general
+  useEffect(() => {
+    if (listo && !navegable && modo !== 'general') {
+      setModo('general');
+      setPedidoGeneral((x) => x + 1);
+    }
+  }, [listo, navegable, modo]);
+
+  // Ver ruta completa: plana y al norte, con el padding de siempre
+  useEffect(() => {
+    if (!estiloListo || pedidoGeneral === generalHecho.current) return;
+    generalHecho.current = pedidoGeneral;
+    const todo = [...linea.current, ...ruta.current.planeada, ruta.current.origen, ruta.current.destino, posicion.current].filter(Boolean);
+    const v = vistaInicial(todo, padding);
+    const op = { padding, pitch: 0, bearing: 0, duration: 1000, easing: 'ease' };
+    mover((cam) => (v.bounds ? cam.fitBounds(v.bounds, op) : cam.easeTo({ ...op, center: v.center, zoom: v.zoom })));
+  }, [pedidoGeneral, estiloListo, padding, mover]);
+
+  // El conductor movió el mapa con el dedo: MapLibre suelta el seguimiento → modo libre
+  const alCambiarSeguimiento = useCallback((e) => {
+    if (seguirRef.current && e?.nativeEvent?.trackUserLocation !== 'course') setModo('libre');
+  }, []);
 
   // Sin señal: el fondo no carga, la línea sí
   useEffect(() => {
@@ -178,15 +245,16 @@ export default function MapaRecorrido({ viaje, activo = true, margenSup = 0, mar
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [version]);
 
+  // Con la flecha nativa no se dibuja el círculo "actual" (una sola marca de posición)
   const datosPuntos = useMemo(() => {
     const f = [];
     const add = (c, tipo) => { if (c) f.push({ type: 'Feature', properties: { tipo }, geometry: { type: 'Point', coordinates: c } }); };
     add(ruta.current.origen, 'origen');
     add(ruta.current.destino, 'destino');
-    add(posicion.current, 'actual');
+    if (!navActiva) add(posicion.current, 'actual');
     return { type: 'FeatureCollection', features: f };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [version]);
+  }, [version, navActiva]);
 
   // Ruta planeada: no cambia durante el viaje (se lee una vez)
   const datosPlaneada = useMemo(() => ({
@@ -219,13 +287,17 @@ export default function MapaRecorrido({ viaje, activo = true, margenSup = 0, mar
     return <View style={[StyleSheet.absoluteFill, styles.centro]}><ActivityIndicator color="#f59e0b" size="large" /></View>;
   }
 
-  const centrarEnMi = () => {
-    setSiguiendo(true);
-    centrarEn(posicion.current, ZOOM_SEGUIR);
+  const navegar = () => {
+    encuadreNav.current = true;
+    setModo('navegacion');
+  };
+  const verRutaCompleta = () => {
+    setModo('general');
+    setPedidoGeneral((x) => x + 1);
   };
 
   return (
-    <View style={StyleSheet.absoluteFill}>
+    <View style={StyleSheet.absoluteFill} onLayout={(e) => setAlto(Math.round(e.nativeEvent.layout.height))}>
       <Map
         style={StyleSheet.absoluteFill}
         mapStyle={estilo}
@@ -233,11 +305,17 @@ export default function MapaRecorrido({ viaje, activo = true, margenSup = 0, mar
         compass={false}
         attribution
         attributionPosition={{ bottom: margenInf + 6, right: 8 }}
-        onRegionWillChange={(e) => { if (e?.nativeEvent?.userInteraction) setSiguiendo(false); }}
+        contentInset={navegable && modo !== 'general' ? insetNav : INSET_CERO}
+        onDidFinishLoadingStyle={() => setEstiloListo(true)}
         onDidFailLoadingMap={() => setFalloFondo(true)}
         onDidFinishLoadingMap={() => setFalloFondo(false)}
       >
-        <Camera ref={camara} initialViewState={vista.current} />
+        <Camera
+          ref={camara}
+          initialViewState={vista.current}
+          trackUserLocation={seguir ? 'course' : undefined}
+          onTrackUserLocationChange={alCambiarSeguimiento}
+        />
         {/* Ruta planeada: punteada violeta, DEBAJO del recorrido real (va antes en el orden) */}
         <GeoJSONSource id="planeada" data={datosPlaneada}>
           <Layer id="planeada-linea" type="line" layout={{ 'line-cap': 'butt', 'line-join': 'round' }}
@@ -258,6 +336,7 @@ export default function MapaRecorrido({ viaje, activo = true, margenSup = 0, mar
           }} />
         </GeoJSONSource>
         {marcasPeajes}
+        {navActiva ? <NativeUserLocation mode="course" androidPreferredFramesPerSecond={15} /> : null}
       </Map>
 
       {/* Avisos, centrados bajo la franja superior */}
@@ -266,20 +345,35 @@ export default function MapaRecorrido({ viaje, activo = true, margenSup = 0, mar
         {linea.current.length < 2 ? <Text style={styles.aviso}>Aún no hay recorrido para dibujar</Text> : null}
       </View>
 
-      {/* Controles a la derecha: fondo claro/oscuro y centrar en mí (grandes, para guantes) */}
+      {/* Controles a la derecha: fondo claro/oscuro y Ver ruta completa / Navegar (grandes, para guantes) */}
       <View style={[styles.controles, { top: margenSup + 8 }]}>
         <TouchableOpacity style={styles.btnControl} onPress={() => setTema((t) => (t === 'oscuro' ? 'claro' : 'oscuro'))}
           accessibilityLabel={tema === 'oscuro' ? 'Fondo claro' : 'Fondo oscuro'}>
           <FontAwesome5 name={tema === 'oscuro' ? 'sun' : 'moon'} size={20} color="#0f172a" />
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.btnControl, siguiendo && styles.btnControlActivo]} onPress={centrarEnMi}
-          accessibilityLabel="Centrar en mí">
-          <FontAwesome5 name="location-arrow" size={20} color={siguiendo ? '#fff' : '#1d4ed8'} />
-        </TouchableOpacity>
+        {navegable && modo === 'general' ? (
+          <TouchableOpacity style={[styles.btnControl, styles.btnControlActivo]} onPress={navegar} accessibilityLabel="Navegar">
+            <FontAwesome5 name="location-arrow" size={20} color="#fff" />
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity style={styles.btnControl} onPress={verRutaCompleta} accessibilityLabel="Ver ruta completa">
+            <FontAwesome5 name="route" size={20} color="#1d4ed8" />
+          </TouchableOpacity>
+        )}
       </View>
 
-      <View style={[styles.leyenda, { bottom: margenInf + 8 }]} pointerEvents="none">
-        <Text style={styles.leyendaTexto}><Text style={{ color: '#16a34a' }}>●</Text> Origen  <Text style={{ color: '#dc2626' }}>●</Text> Destino  <Text style={{ color: '#2563eb' }}>●</Text> Actual</Text>
+      {/* Recentrar (estilo Waze): solo después de mover el mapa con el dedo */}
+      {navegable && modo === 'libre' ? (
+        <TouchableOpacity style={[styles.btnRecentrar, { bottom: margenInf + 18 + altoLeyenda }]} onPress={navegar}
+          accessibilityLabel="Recentrar">
+          <FontAwesome5 name="location-arrow" size={18} color="#fff" style={{ marginRight: 10 }} />
+          <Text style={styles.btnRecentrarTexto}>Recentrar</Text>
+        </TouchableOpacity>
+      ) : null}
+
+      <View style={[styles.leyenda, { bottom: margenInf + 8 }]} pointerEvents="none"
+        onLayout={(e) => setAltoLeyenda(Math.round(e.nativeEvent.layout.height))}>
+        <Text style={styles.leyendaTexto}><Text style={{ color: '#16a34a' }}>●</Text> Origen  <Text style={{ color: '#dc2626' }}>●</Text> Destino  <Text style={{ color: '#2563eb' }}>{navActiva ? '➤' : '●'}</Text> Actual</Text>
         {hayPlaneada ? (
           <Text style={styles.leyendaTexto}><Text style={{ color: '#7c3aed', fontWeight: '900' }}>- - -</Text> Ruta planeada{ruta.current.peajes.length ? '  ' : ''}{ruta.current.peajes.length ? <Text style={{ color: '#b45309' }}>● Peaje</Text> : null}</Text>
         ) : null}
@@ -295,6 +389,8 @@ const styles = StyleSheet.create({
   controles: { position: 'absolute', right: 10 },
   btnControl: { width: 52, height: 52, borderRadius: 26, backgroundColor: 'rgba(255,255,255,0.95)', alignItems: 'center', justifyContent: 'center', marginBottom: 10, elevation: 4 },
   btnControlActivo: { backgroundColor: '#1d4ed8' },
+  btnRecentrar: { position: 'absolute', left: 8, height: 54, paddingHorizontal: 22, borderRadius: 27, backgroundColor: '#1d4ed8', flexDirection: 'row', alignItems: 'center', elevation: 6 },
+  btnRecentrarTexto: { color: '#fff', fontSize: 17, fontWeight: '900' },
   leyenda: { position: 'absolute', left: 8, backgroundColor: 'rgba(255,255,255,0.92)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
   leyendaTexto: { color: '#0f172a', fontSize: 11, fontWeight: '700' },
   peaje: { alignItems: 'center' },
