@@ -3,16 +3,18 @@
 // planeada punteada y los peajes, si el servidor la calculó) y la última ubicación conocida del
 // sistema. No toca la tarea 'opticore-gps' ni la cola de envío.
 // Modo navegación (viaje EN_CURSO): la cámara sigue al vehículo con el seguimiento nativo de
-// MapLibre (inclinada y girando con la marcha) y una flecha nativa marca la posición. Ese
-// seguimiento enciende la ubicación del mapa, por eso SOLO va con la app al frente, la pantalla
-// del viaje visible (prop `activo`) y el modo navegación; si no, se apaga y se desmonta la flecha.
+// MapLibre (inclinada y girando con la marcha). Ese seguimiento enciende la ubicación del mapa,
+// por eso SOLO va con la app al frente, la pantalla del viaje visible (prop `activo`) y el modo
+// navegación. La posición es una volqueta: en navegación, fija en el punto donde el seguimiento
+// pone al usuario (centro del área que deja contentInset; "adelante" = arriba); en los demás
+// modos, un Marker en la posición. Sin NativeUserLocation, MapLibre sigue sin dibujar nada.
 // Batería: los puntos se releen como máximo cada 10 s y con las mismas condiciones.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, AppState, useColorScheme } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import * as Location from 'expo-location';
-import { FontAwesome5 } from '@expo/vector-icons';
-import { Map, Camera, GeoJSONSource, Layer, Marker, NativeUserLocation } from '@maplibre/maplibre-react-native';
+import { FontAwesome5, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Map, Camera, GeoJSONSource, Layer, Marker } from '@maplibre/maplibre-react-native';
 
 import { MAPA_FONDOS } from '../config';
 import { getDb } from '../database/db';
@@ -27,6 +29,20 @@ const NAV_ZOOM = 17;             // si a velocidad de carretera se ve muy cerca,
 const NAV_PITCH = 55;
 const NAV_ANIM_MS = 700;         // inclinar/acercar antes de encender el seguimiento
 const INSET_CERO = { top: 0, right: 0, bottom: 0, left: 0 };
+const VOLQUETA = 44;             // diámetro del badge de posición
+
+/** Badge de posición: volqueta blanca sobre círculo azul; `adelante` = triangulito arriba. */
+function Volqueta({ adelante = false }) {
+  return (
+    <View style={styles.volqueta} pointerEvents="none">
+      {adelante ? <View style={styles.volquetaAdelante} /> : null}
+      {adelante ? <View style={styles.volquetaAdelanteRelleno} /> : null}
+      <View style={styles.volquetaBadge}>
+        <MaterialCommunityIcons name="dump-truck" size={24} color="#fff" />
+      </View>
+    </View>
+  );
+}
 
 function estiloFondo(tema) {
   const f = MAPA_FONDOS[tema] || MAPA_FONDOS.claro;
@@ -245,16 +261,15 @@ export default function MapaRecorrido({ viaje, activo = true, margenSup = 0, mar
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [version]);
 
-  // Con la flecha nativa no se dibuja el círculo "actual" (una sola marca de posición)
+  // La posición no va aquí: es la volqueta (fija en navegación o Marker)
   const datosPuntos = useMemo(() => {
     const f = [];
     const add = (c, tipo) => { if (c) f.push({ type: 'Feature', properties: { tipo }, geometry: { type: 'Point', coordinates: c } }); };
     add(ruta.current.origen, 'origen');
     add(ruta.current.destino, 'destino');
-    if (!navActiva) add(posicion.current, 'actual');
     return { type: 'FeatureCollection', features: f };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [version, navActiva]);
+  }, [listo]);
 
   // Ruta planeada: no cambia durante el viaje (se lee una vez)
   const datosPlaneada = useMemo(() => ({
@@ -286,6 +301,9 @@ export default function MapaRecorrido({ viaje, activo = true, margenSup = 0, mar
   if (!listo) {
     return <View style={[StyleSheet.absoluteFill, styles.centro]}><ActivityIndicator color="#f59e0b" size="large" /></View>;
   }
+
+  const volquetaFija = navActiva && !!posicion.current;
+  const yFija = insetNav.top + (alto - insetNav.top - insetNav.bottom) / 2;
 
   const navegar = () => {
     encuadreNav.current = true;
@@ -329,15 +347,25 @@ export default function MapaRecorrido({ viaje, activo = true, margenSup = 0, mar
         </GeoJSONSource>
         <GeoJSONSource id="marcas" data={datosPuntos}>
           <Layer id="marcas-circulo" type="circle" paint={{
-            'circle-radius': ['match', ['get', 'tipo'], 'actual', 9, 10],
-            'circle-color': ['match', ['get', 'tipo'], 'origen', '#16a34a', 'destino', '#dc2626', '#2563eb'],
+            'circle-radius': 10,
+            'circle-color': ['match', ['get', 'tipo'], 'origen', '#16a34a', '#dc2626'],
             'circle-stroke-color': '#ffffff',
             'circle-stroke-width': 3,
           }} />
         </GeoJSONSource>
         {marcasPeajes}
-        {navActiva ? <NativeUserLocation mode="course" androidPreferredFramesPerSecond={15} /> : null}
+        {!volquetaFija && posicion.current ? (
+          <Marker id="actual" lngLat={posicion.current} anchor="center"><Volqueta /></Marker>
+        ) : null}
       </Map>
+
+      {/* Navegación: el seguimiento pone al usuario en el centro del área que deja contentInset
+          (con o sin inclinación) y gira el mapa con la marcha → la volqueta va fija ahí, mirando arriba */}
+      {volquetaFija ? (
+        <View style={[styles.volquetaFija, { top: yFija - VOLQUETA / 2 }]} pointerEvents="none">
+          <Volqueta adelante />
+        </View>
+      ) : null}
 
       {/* Avisos, centrados bajo la franja superior */}
       <View style={[styles.avisos, { top: margenSup + 8 }]} pointerEvents="none">
@@ -373,7 +401,7 @@ export default function MapaRecorrido({ viaje, activo = true, margenSup = 0, mar
 
       <View style={[styles.leyenda, { bottom: margenInf + 8 }]} pointerEvents="none"
         onLayout={(e) => setAltoLeyenda(Math.round(e.nativeEvent.layout.height))}>
-        <Text style={styles.leyendaTexto}><Text style={{ color: '#16a34a' }}>●</Text> Origen  <Text style={{ color: '#dc2626' }}>●</Text> Destino  <Text style={{ color: '#2563eb' }}>{navActiva ? '➤' : '●'}</Text> Actual</Text>
+        <Text style={styles.leyendaTexto}><Text style={{ color: '#16a34a' }}>●</Text> Origen  <Text style={{ color: '#dc2626' }}>●</Text> Destino  <MaterialCommunityIcons name="dump-truck" size={12} color="#1d4ed8" /> Actual</Text>
         {hayPlaneada ? (
           <Text style={styles.leyendaTexto}><Text style={{ color: '#7c3aed', fontWeight: '900' }}>- - -</Text> Ruta planeada{ruta.current.peajes.length ? '  ' : ''}{ruta.current.peajes.length ? <Text style={{ color: '#b45309' }}>● Peaje</Text> : null}</Text>
         ) : null}
@@ -391,6 +419,12 @@ const styles = StyleSheet.create({
   btnControlActivo: { backgroundColor: '#1d4ed8' },
   btnRecentrar: { position: 'absolute', left: 8, height: 54, paddingHorizontal: 22, borderRadius: 27, backgroundColor: '#1d4ed8', flexDirection: 'row', alignItems: 'center', elevation: 6 },
   btnRecentrarTexto: { color: '#fff', fontSize: 17, fontWeight: '900' },
+  volquetaFija: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
+  volqueta: { width: VOLQUETA, height: VOLQUETA },
+  volquetaBadge: { width: VOLQUETA, height: VOLQUETA, borderRadius: VOLQUETA / 2, backgroundColor: '#1d4ed8', borderWidth: 3, borderColor: '#fff', alignItems: 'center', justifyContent: 'center', elevation: 6, shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 4, shadowOffset: { width: 0, height: 2 } },
+  // Triángulo "hacia adelante": borde blanco con relleno azul, pegado arriba del badge
+  volquetaAdelante: { position: 'absolute', top: -13, left: VOLQUETA / 2 - 10, width: 0, height: 0, borderLeftWidth: 10, borderRightWidth: 10, borderBottomWidth: 14, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: '#fff' },
+  volquetaAdelanteRelleno: { position: 'absolute', top: -8, left: VOLQUETA / 2 - 6, width: 0, height: 0, borderLeftWidth: 6, borderRightWidth: 6, borderBottomWidth: 9, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: '#1d4ed8' },
   leyenda: { position: 'absolute', left: 8, backgroundColor: 'rgba(255,255,255,0.92)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
   leyendaTexto: { color: '#0f172a', fontSize: 11, fontWeight: '700' },
   peaje: { alignItems: 'center' },
