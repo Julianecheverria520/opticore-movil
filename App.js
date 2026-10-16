@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, ActivityIndicator, Alert, StyleSheet, Text, TouchableOpacity } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { guardarToken, leerToken } from './src/sesion';
@@ -16,18 +16,44 @@ import ViajeEnCursoScreen from './src/screens/ViajeEnCursoScreen';
 import PermisoUbicacionScreen from './src/screens/PermisoUbicacionScreen';
 
 // Base de datos y Sincronización
-import { iniciarBaseDeDatos } from './src/database/db';
+import { iniciarBaseDeDatos, getDb } from './src/database/db';
+import { prepararNotificaciones, escucharToques } from './src/recordatorioPreop';
 import { enviarPendientes } from './src/database/syncUp';
 import { sincronizarDatosMaestros, ultimoMotivoSync } from './src/database/sync';
 import { API_URL } from './src/config';
 
 const Stack = createNativeStackNavigator();
+const navRef = createNavigationContainerRef();
 
 export default function App() {
   const [isReady, setIsReady] = useState(false);
   const [userToken, setUserToken] = useState(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [errorDb, setErrorDb] = useState(null);
+  const tokenRef = useRef(null);
+  tokenRef.current = userToken;
+
+  // Toque en el aviso del recordatorio: Preoperacional del equipo recordado, o Home si no hay.
+  // Si la navegación aún no está lista (arranque en frío desde el aviso), se hace en onReady.
+  const toquePendiente = useRef(false);
+  const abrirDesdeRecordatorio = useCallback(async () => {
+    if (!navRef.isReady()) { toquePendiente.current = true; return; }
+    toquePendiente.current = false;
+    if (!tokenRef.current) return; // sin sesión: se queda en el login
+    try {
+      const placa = await AsyncStorage.getItem('equipoRecordado');
+      const eq = placa ? await (await getDb()).getFirstAsync('SELECT placa FROM equipos WHERE placa = ?', placa) : null;
+      if (eq) navRef.navigate('Preoperacional', { placa: eq.placa });
+      else navRef.navigate('Home');
+    } catch (e) {
+      console.warn('Recordatorio: no se pudo abrir el preoperacional:', e?.message || e);
+    }
+  }, []);
+
+  useEffect(() => {
+    prepararNotificaciones();
+    return escucharToques(abrirDesdeRecordatorio);
+  }, [abrirDesdeRecordatorio]);
 
   const prepararApp = useCallback(async () => {
     setIsReady(false);
@@ -106,7 +132,7 @@ export default function App() {
   }
 
   return (
-    <NavigationContainer>
+    <NavigationContainer ref={navRef} onReady={() => { if (toquePendiente.current) abrirDesdeRecordatorio(); }}>
       <Stack.Navigator>
         {userToken == null ? (
           // ================= MÓDULO PÚBLICO (Sin Sesión) =================

@@ -4,6 +4,7 @@ import { fetchConTimeout, esErrorDeRed } from '../red';
 import { guardarFallasDescargadas } from '../fallas';
 import { guardarPeajesRutas } from '../rutaPlaneada';
 import { CLAVE_CONFIG_CONECTADOS } from '../configEquipo';
+import { CLAVE_RECORDATORIO } from '../recordatorioPreop';
 
 // 'ok' | 'vacio' | 'sesion' | 'sin_red' | 'error'
 export let ultimoMotivoSync = null;
@@ -203,6 +204,11 @@ async function bajar(token, API_URL) {
     // v12 · paquetes de Configuración de activos que ya manda la operación (src/configEquipo.js)
     if (Array.isArray(data?.config_conectados)) {
       await AsyncStorage.setItem(CLAVE_CONFIG_CONECTADOS, JSON.stringify(data.config_conectados));
+    }
+    // 1.5.0 · recordatorio del preoperacional (src/recordatorioPreop.js). Un servidor viejo no lo manda:
+    // queda el guardado, o apagado si nunca llegó.
+    if (data?.recordatorio_preop && typeof data.recordatorio_preop === 'object') {
+      await AsyncStorage.setItem(CLAVE_RECORDATORIO, JSON.stringify(data.recordatorio_preop));
     }
 
     const a = new Date();

@@ -9,6 +9,7 @@ import * as Location from 'expo-location';
 import { API_URL } from '../config';
 import { getDb, nuevoUUID, ahoraISO, parseNum, esMaquinaria } from '../database/db';
 import { enviarPendientes } from '../database/syncUp';
+import { reprogramarRecordatorios } from '../recordatorioPreop';
 import { fetchConTimeout } from '../red';
 import {
   RESUELTA, CONTINUA, textoDias, armarObservaciones,
@@ -279,6 +280,9 @@ export default function PreoperacionalScreen({ route, navigation }) {
 
       // 4. Disparar subida en segundo plano (si no hay red simplemente se omite)
       enviarPendientes().catch(() => {});
+
+      // 5. Ya hay preoperacional hoy: se quita el recordatorio de hoy (los de los otros días siguen)
+      reprogramarRecordatorios();
 
       Alert.alert(
         '✅ Reporte Guardado',

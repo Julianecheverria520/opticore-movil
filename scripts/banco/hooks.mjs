@@ -8,6 +8,8 @@ const MOCKS = {
   'expo-file-system': new URL('./mock-file-system.mjs', import.meta.url).href,
   'expo-image-manipulator': new URL('./mock-image-manipulator.mjs', import.meta.url).href,
   'expo-secure-store': new URL('./mock-secure-store.mjs', import.meta.url).href,
+  'expo-notifications': new URL('./mock-notifications.mjs', import.meta.url).href,
+  'react-native': new URL('./mock-react-native.mjs', import.meta.url).href,
 };
 
 export async function resolve(spec, ctx, next) {

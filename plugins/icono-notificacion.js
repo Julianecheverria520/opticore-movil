@@ -1,9 +1,11 @@
 // plugins/icono-notificacion.js
 // Ícono de la notificación del GPS ("Viaje en curso"). expo-location usa el drawable
 // `notification_icon` si existe; si no, el ícono de la app, que Android pinta como un cuadrado
-// blanco. La clave `notification` de app.json ya no existe en Expo 57 y expo-notifications no
-// está instalado, así que este plugin copia los PNG (blancos sobre transparente, generados con
-// scripts/generar_icono_notificacion.py) a res/drawable-<densidad>/notification_icon.png.
+// blanco. La clave `notification` de app.json ya no existe en Expo 57, así que este plugin copia
+// los PNG (blancos sobre transparente, generados con scripts/generar_icono_notificacion.py) a
+// res/drawable-<densidad>/notification_icon.png.
+// 1.5.0 · expo-notifications (recordatorio del preoperacional) escribe el mismo drawable a partir
+// de assets/notificacion/xxxhdpi.png (reducido a cada densidad): el mismo cubo, gane quien gane.
 const fs = require('fs');
 const path = require('path');
 const { withDangerousMod } = require('expo/config-plugins');

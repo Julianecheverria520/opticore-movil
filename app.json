@@ -2,7 +2,7 @@
   "expo": {
     "name": "opticore-movil",
     "slug": "opticore-movil",
-    "version": "1.4.0",
+    "version": "1.5.0",
     "runtimeVersion": {
       "policy": "appVersion"
     },
@@ -46,6 +46,13 @@
           "imageWidth": 136,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notificacion/xxxhdpi.png",
+          "color": "#004a99"
         }
       ],
       "./plugins/icono-notificacion",

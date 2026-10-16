@@ -18,6 +18,7 @@ import { asegurarGPS } from '../gps/control';
 import { esperarFotosTiquete, reintentarFotosTiquete, descartarFotosTiquete } from '../tiquetes';
 import { revisarActualizacion, describirVersion } from '../actualizaciones';
 import { configPaquetePorPlaca, haceViajes, TEXTO_SIN_VIAJES, AYUDA_SIN_VIAJES } from '../configEquipo';
+import { reprogramarRecordatorios, cancelarRecordatorios, pedirPermisoRecordatorio } from '../recordatorioPreop';
 
 // Equipo recordado: la última placa validada en este celular (se borra con "Cambiar" y "Salir")
 const CLAVE_EQUIPO = 'equipoRecordado';
@@ -103,6 +104,8 @@ export default function HomeScreen({ navigation }) {
     } finally {
       try { setPendientes(await contarPendientes()); } catch {}
       refrescarViaje();
+      // Recordatorio del preoperacional con la config recién bajada (o la guardada si no hubo señal)
+      reprogramarRecordatorios();
       setIsSyncing(false);
       sincronizando.current = false;
     }
@@ -129,6 +132,10 @@ export default function HomeScreen({ navigation }) {
       // Primer uso sin equipos descargados: se reintenta con la lista recién bajada
       if (!restaurado && !equipoRef.current) await restaurarEquipo();
 
+      // Android 13+: permiso de notificaciones para el recordatorio (una sola vez, si la empresa lo usa;
+      // los avisos ya quedaron programados al terminar la sincronización)
+      await pedirPermisoRecordatorio();
+
       // OTA: solo con señal y sin viaje en curso; se aplica en el siguiente arranque en frío
       revisarActualizacion({ forzar: true });
     }
@@ -145,6 +152,7 @@ export default function HomeScreen({ navigation }) {
       asegurarGPS().catch(() => {});
       refrescarViaje();
       enviarPendientes().then(async () => setPendientes(await contarPendientes())).catch(() => {});
+      reprogramarRecordatorios();
       revisarActualizacion();
     });
 
@@ -198,6 +206,7 @@ export default function HomeScreen({ navigation }) {
             }
             await borrarToken();
             await AsyncStorage.removeItem(CLAVE_EQUIPO);
+            await cancelarRecordatorios();
             Updates.reloadAsync();
           },
         },
@@ -232,6 +241,7 @@ export default function HomeScreen({ navigation }) {
     setEquipoActual(null);
     setPlacaInput('');
     try { await AsyncStorage.removeItem(CLAVE_EQUIPO); } catch { /* no bloquea */ }
+    reprogramarRecordatorios();
   };
 
   // E7 · Solo se aceptan placas que existen en los equipos descargados
@@ -246,6 +256,7 @@ export default function HomeScreen({ navigation }) {
       if (eq) {
         setEquipoActual({ placa: eq.placa, tipo: eq.tipo || 'VEHÍCULO', usaHoras: esMaquinaria(eq) });
         await AsyncStorage.setItem(CLAVE_EQUIPO, eq.placa);
+        reprogramarRecordatorios();
         return;
       }
 
