@@ -29,7 +29,7 @@ try {
   // 2) La app nueva abre la misma base: v10 -> v11 conservando datos
   const { getDb } = await import(new URL('src/database/db.js', RAIZ).href);
   const db = await getDb();
-  chk((await db.getFirstAsync('PRAGMA user_version')).user_version === 11, 'v10 → user_version 11');
+  chk((await db.getFirstAsync('PRAGMA user_version')).user_version >= 11, 'v10 → user_version 11 o más (v12: probar_config_equipo)');
   const ct = (await db.getAllAsync('PRAGMA table_info(tanqueos_pendientes)')).map((c) => c.name);
   for (const c of ['advertencia_confirmada', 'foto_uri', 'foto_estado', 'intentos_foto', 'diag_foto',
     'requiere_revision', 'motivo_revision', 'viaje_uuid']) {
@@ -88,7 +88,7 @@ try {
   const { getDb: getDbNueva } = await import(`${new URL('src/database/db.js', RAIZ).href}?nueva`);
   const nueva = await getDbNueva();
   await nueva.runAsync("INSERT INTO tanqueos_pendientes (uuid, placa) VALUES ('n1', 'X')");
-  chk((await nueva.getFirstAsync('PRAGMA user_version')).user_version === 11
+  chk((await nueva.getFirstAsync('PRAGMA user_version')).user_version >= 11
     && (await nueva.getFirstAsync('SELECT foto_estado FROM tanqueos_pendientes')).foto_estado === 'sin_foto',
   'instalación nueva: v0 → v11 y foto_estado por defecto sin_foto');
 

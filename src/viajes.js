@@ -225,8 +225,14 @@ export function uuidViaje() {
   return nuevoUUID();
 }
 
+// Estado de la etapa de foto cuando el viaje se guarda SIN foto (Configuración de activos: foto
+// NO u OPCIONAL). No es 'pending' (la cola no espera un archivo que nunca va a existir) ni 'error'
+// (no es un problema de envío ni se reintenta). Un JS anterior lo trata igual: solo sube 'pending'
+// y solo marca problema con 'error'.
+export const FOTO_OMITIDA = 'sin_foto';
+
 /**
- * Guarda el viaje en SQLite y lo deja en cola (inicio + foto_inicio).
+ * Guarda el viaje en SQLite y lo deja en cola (inicio + foto_inicio, si hay foto).
  * Lanza un Error con mensaje para el operador si ya hay un viaje en curso.
  */
 export async function crearViajeLocal(d) {
@@ -243,12 +249,12 @@ export async function crearViajeLocal(d) {
              'pending', ?, 'pending', 'pending', 'pending')`,
     d.uuid, usuario, d.placa, d.material, d.origen, d.destino, d.rutaId ?? null, d.rutaNombre ?? null,
     d.remision, d.cantidad ?? null, d.fechaInicioIso || ahoraISO(), d.lat ?? null, d.lon ?? null,
-    d.fotoInicioPath ?? null, d.fotoInicioPath ? 'pending' : 'error'
+    d.fotoInicioPath ?? null, d.fotoInicioPath ? 'pending' : FOTO_OMITIDA
   );
   return obtenerViaje(d.uuid);
 }
 
-/** Cierra el viaje en el celular y deja en cola foto_fin + fin. */
+/** Cierra el viaje en el celular y deja en cola foto_fin (si hay foto) + fin. */
 export async function finalizarViajeLocal(uuid, { fotoFinPath, lat, lon, fechaFinIso } = {}) {
   const db = await getDb();
   await db.runAsync(
@@ -256,7 +262,7 @@ export async function finalizarViajeLocal(uuid, { fotoFinPath, lat, lon, fechaFi
         SET estado_local = 'FINALIZADO', fecha_fin_iso = ?, lat_fin = ?, lon_fin = ?,
             foto_fin_path = ?, sync_foto_fin = ?, sync_status = CASE WHEN sync_status = 'synced' THEN 'pending' ELSE sync_status END
       WHERE uuid = ? AND estado_local = 'EN_CURSO'`,
-    fechaFinIso || ahoraISO(), lat ?? null, lon ?? null, fotoFinPath ?? null, fotoFinPath ? 'pending' : 'error', uuid
+    fechaFinIso || ahoraISO(), lat ?? null, lon ?? null, fotoFinPath ?? null, fotoFinPath ? 'pending' : FOTO_OMITIDA, uuid
   );
   return obtenerViaje(uuid);
 }

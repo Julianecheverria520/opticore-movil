@@ -17,6 +17,7 @@ import { viajeEnCurso, viajesConProblema, viajesAbiertosAjenos, describirAjenos 
 import { asegurarGPS } from '../gps/control';
 import { esperarFotosTiquete, reintentarFotosTiquete, descartarFotosTiquete } from '../tiquetes';
 import { revisarActualizacion, describirVersion } from '../actualizaciones';
+import { configPaquetePorPlaca, haceViajes, TEXTO_SIN_VIAJES, AYUDA_SIN_VIAJES } from '../configEquipo';
 
 // Equipo recordado: la última placa validada en este celular (se borra con "Cambiar" y "Salir")
 const CLAVE_EQUIPO = 'equipoRecordado';
@@ -56,9 +57,15 @@ export default function HomeScreen({ navigation }) {
   const [viajeProblema, setViajeProblema] = useState(null);
   // Viajes abiertos en el servidor que este celular no tiene (se consulta con cada sincronización)
   const [ajenos, setAjenos] = useState([]);
+  // Configuración de activos: el equipo actual no hace viajes (última bajada, sirve sin señal)
+  const [sinViajes, setSinViajes] = useState(false);
   const refrescarViaje = useCallback(async () => {
     try { setViajeActivo(await viajeEnCurso()); } catch {}
     try { setViajeProblema((await viajesConProblema())[0] || null); } catch {}
+    try {
+      const placa = equipoRef.current?.placa;
+      setSinViajes(!!placa && !haceViajes(await configPaquetePorPlaca(placa, 'viajes')));
+    } catch { setSinViajes(false); }
   }, []);
 
   const sincronizarFondo = useCallback(async () => {
@@ -162,6 +169,9 @@ export default function HomeScreen({ navigation }) {
     });
     return unsub;
   }, [navigation, refrescarViaje]);
+
+  // Otro equipo elegido: su configuración de viajes (equipoRef ya tiene la placa nueva)
+  useEffect(() => { refrescarViaje(); }, [equipoActual?.placa, refrescarViaje]);
 
   // Re-login desde el aviso de sesión vencida: guarda el token nuevo y reintenta el envío
   const reloginExitoso = async (token, username) => {
@@ -512,12 +522,22 @@ export default function HomeScreen({ navigation }) {
           </TouchableOpacity>
         </View>
         <View style={styles.row}>
-          <TouchableOpacity style={[styles.cardPrimary, { backgroundColor: '#f59e0b', minHeight: 110 }]} onPress={abrirViaje}>
-            <View style={[styles.iconLightWrap, { backgroundColor: 'rgba(255,255,255,0.25)' }]}><FontAwesome5 name="route" size={18} color="#fff" /></View>
-            <Text style={styles.cardTitle}>{viajeActivo ? 'Viaje en curso' : 'Viaje'}</Text>
-            <Text style={styles.cardSubtitle}>{viajeActivo ? `${viajeActivo.placa} • ${viajeActivo.origen} ➔ ${viajeActivo.destino}` : 'Iniciar un viaje con carga'}</Text>
-            <FontAwesome5 name="chevron-right" size={12} color="#fff" style={styles.chevronPos} />
-          </TouchableOpacity>
+          {/* Un viaje en curso siempre se puede abrir; sin él, un equipo que no hace viajes no inicia */}
+          {sinViajes && !viajeActivo ? (
+            <View style={[styles.cardPrimary, styles.cardDeshabilitada, { minHeight: 110 }]} accessibilityState={{ disabled: true }}>
+              <View style={[styles.iconLightWrap, { backgroundColor: 'rgba(255,255,255,0.15)' }]}><FontAwesome5 name="route" size={18} color="#cbd5e1" /></View>
+              <Text style={[styles.cardTitle, { color: '#e2e8f0' }]}>Viaje</Text>
+              <Text style={[styles.cardSubtitle, { color: '#e2e8f0' }]}>{TEXTO_SIN_VIAJES}</Text>
+              <Text style={styles.cardAyuda}>{AYUDA_SIN_VIAJES}</Text>
+            </View>
+          ) : (
+            <TouchableOpacity style={[styles.cardPrimary, { backgroundColor: '#f59e0b', minHeight: 110 }]} onPress={abrirViaje}>
+              <View style={[styles.iconLightWrap, { backgroundColor: 'rgba(255,255,255,0.25)' }]}><FontAwesome5 name="route" size={18} color="#fff" /></View>
+              <Text style={styles.cardTitle}>{viajeActivo ? 'Viaje en curso' : 'Viaje'}</Text>
+              <Text style={styles.cardSubtitle}>{viajeActivo ? `${viajeActivo.placa} • ${viajeActivo.origen} ➔ ${viajeActivo.destino}` : 'Iniciar un viaje con carga'}</Text>
+              <FontAwesome5 name="chevron-right" size={12} color="#fff" style={styles.chevronPos} />
+            </TouchableOpacity>
+          )}
         </View>
         <Text style={styles.textoVersion}>{describirVersion()}{isUpdatePending ? ' · actualización lista: se aplica al volver a abrir la app' : ''}</Text>
       </ScrollView>
@@ -575,6 +595,8 @@ const styles = StyleSheet.create({
   iconLightWrap: { width: 40, height: 40, backgroundColor: 'rgba(255,255,255,0.8)', borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
   cardTitle: { color: '#fff', fontSize: 16, fontWeight: 'bold', marginTop: 15 },
   cardSubtitle: { color: 'rgba(255,255,255,0.8)', fontSize: 11 },
+  cardDeshabilitada: { backgroundColor: '#475569', borderWidth: 1, borderColor: '#64748b' },
+  cardAyuda: { color: '#cbd5e1', fontSize: 10, marginTop: 2 },
   chevronPos: { position: 'absolute', right: 15, bottom: 20 },
   cameraContainer: { flex: 1, justifyContent: 'flex-end' },
   cameraOverlay: { position: 'absolute', bottom: 40, left: 20, right: 20, alignItems: 'center' },

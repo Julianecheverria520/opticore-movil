@@ -8,8 +8,10 @@
  * con la categoría de peaje del equipo ("Categoria III").
  *
  * Sin geometría (servidor viejo, ruta sin coordenadas o el servicio de rutas falló) todo queda
- * vacío y el mapa se ve como antes.
+ * vacío y el mapa se ve como antes. Igual si la Configuración de activos del equipo dice que no
+ * muestra ruta planeada ni peajes (src/configEquipo.js).
  */
+import { configPaquete, muestraRutaPeajes } from './configEquipo';
 
 /** Polyline de Google → [[lon, lat], ...] (orden GeoJSON). Texto vacío o dañado → []. */
 export function decodificarPolyline(texto, precision = 5) {
@@ -83,9 +85,12 @@ async function rutaDe(db, viaje) {
 export async function datosRutaPlaneada(db, viaje) {
   const ruta = await rutaDe(db, viaje);
   const linea = decodificarPolyline(ruta?.geometria);
-  if (!ruta || linea.length < 2) return { ruta: ruta || null, linea: [], peajes: [], categoria: null, resumen: null };
+  const sinLinea = { ruta: ruta || null, linea: [], peajes: [], categoria: null, resumen: null };
+  if (!ruta || linea.length < 2) return sinLinea;
 
-  const eq = await db.getFirstAsync('SELECT categoria_peaje FROM equipos WHERE placa = ?', (viaje.placa || '').trim().toUpperCase());
+  const eq = await db.getFirstAsync('SELECT categoria_peaje, config_json FROM equipos WHERE placa = ?', (viaje.placa || '').trim().toUpperCase());
+  // Configuración de activos: "Muestra ruta planeada y peajes" = no → mapa y panel como sin línea
+  if (!muestraRutaPeajes(await configPaquete(eq, 'viajes'))) return sinLinea;
   const categoria = eq?.categoria_peaje || null;
   const filas = await db.getAllAsync('SELECT * FROM peajes_ruta WHERE ruta_id = ? ORDER BY orden', ruta.id);
   const peajes = filas

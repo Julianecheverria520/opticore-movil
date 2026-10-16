@@ -199,6 +199,9 @@ async function procesarCola(db, { tabla, ruta, armar, alOk }, token, usuario) {
 //   · 5xx / 408 / 429 -> reintento en la próxima pasada (MAX_INTENTOS)
 // Las FOTOS nunca bloquean: si fallan (por lo que sea) se reintentan en la próxima
 // pasada, pero los puntos y el cierre siguen. El inicio y el fin sí son obligatorios.
+// Un viaje guardado SIN foto (Configuración de activos: NO u OPCIONAL) trae la etapa en
+// 'sin_foto' (viajes.FOTO_OMITIDA): no se sube nada, no cuenta como problema y no frena el
+// cierre de la fila (solo 'pending' sube y solo 'error' es problema).
 // Toda falla queda en diag_envio con su código y mensaje reales (antes una excepción
 // cualquiera se trataba en silencio como "sin red" y el viaje quedaba atascado).
 

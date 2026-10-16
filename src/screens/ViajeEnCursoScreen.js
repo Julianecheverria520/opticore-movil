@@ -16,6 +16,7 @@ import { estadoGPS, iniciarGPS, detenerGPS } from '../gps/control';
 import { estadisticasRecorrido, PRECISION_MAXIMA_M } from '../gps/puntos';
 import { getDb } from '../database/db';
 import { datosRutaPlaneada, formatoPesos, categoriaCorta } from '../rutaPlaneada';
+import { configPaquetePorPlaca, nivelFoto } from '../configEquipo';
 
 // Mapa (MapLibre) a pantalla completa. Se carga con import() dentro de un límite de error:
 // si el build no trae el módulo nativo o el mapa falla, la pantalla pasa a la vista sin
@@ -64,6 +65,7 @@ const ETAPA = {
   synced: { texto: 'Enviado', color: '#10b981', icono: 'check-circle' },
   pending: { texto: 'Pendiente', color: '#f59e0b', icono: 'clock' },
   error: { texto: 'Con error', color: '#ef4444', icono: 'exclamation-circle' },
+  sin_foto: { texto: 'Sin foto', color: '#64748b', icono: 'minus-circle' }, // viajes.FOTO_OMITIDA
 };
 
 function FilaEtapa({ titulo, estado, nota }) {
@@ -104,6 +106,7 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
   const [altoFranja, setAltoFranja] = useState(110);
   const [panelAbierto, setPanelAbierto] = useState(false);
   const [rutaPlan, setRutaPlan] = useState(null); // { peajes, categoria, resumen } · resumen null = sin línea
+  const [nivelDescarga, setNivelDescarga] = useState('OBLIGATORIA'); // foto de descarga (Configuración de activos)
   const enfocada = useIsFocused(); // el mapa no refresca con otra pantalla encima
   const insets = useSafeAreaInsets();
   const { height: altoVentana } = useWindowDimensions();
@@ -181,6 +184,10 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
         const info = await datosRutaPlaneada(await getDb(), viaje);
         if (vivo) setRutaPlan(info);
       } catch { /* sin ruta planeada: el panel queda como antes */ }
+      try {
+        const nivel = nivelFoto(await configPaquetePorPlaca(viaje.placa, 'viajes'), 'foto_descarga');
+        if (vivo) setNivelDescarga(nivel);
+      } catch { /* sin configuración: foto obligatoria, como siempre */ }
     })();
     return () => { vivo = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -199,39 +206,60 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
     return () => { clearInterval(t); sub.remove(); };
   }, [recargar, enviarAhora]);
 
-  const finalizar = async () => {
-    Alert.alert('Finalizar viaje', 'Toma la foto de la descarga para cerrar el viaje.', [
-      { text: 'Cancelar', style: 'cancel' },
-      {
-        text: 'Tomar foto',
-        onPress: async () => {
-          let fotoFin = null;
-          try {
-            const { status } = await ImagePicker.requestCameraPermissionsAsync();
-            if (status !== 'granted') { Alert.alert('Cámara', 'Se necesita permiso de cámara para la foto de descarga.'); return; }
-            const r = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.5 });
-            if (r.canceled || !r.assets?.length) return;
-            setFinalizando(true);
-            fotoFin = await guardarFoto(r.assets[0].uri, viaje.uuid, 'fin', r.assets[0].width);
-            const pos = await ubicacionConocida();
-            await finalizarViajeLocal(viaje.uuid, { fotoFinPath: fotoFin, lat: pos?.lat, lon: pos?.lon });
-            // Primero se guarda el cierre y después se apaga el GPS: si guardar falla, el viaje
-            // sigue EN_CURSO con el GPS encendido (antes quedaba en curso y sin GPS).
-            // Los puntos que falten se suben antes del cierre.
-            await detenerGPS();
-            enviarPendientes().catch(() => {});
-            Alert.alert('✅ Viaje finalizado', 'Quedó guardado en el celular y se enviará automáticamente cuando haya señal.', [
-              { text: 'OK', onPress: () => navigation.navigate('Home') },
-            ]);
-          } catch (e) {
-            if (fotoFin) borrarArchivo(fotoFin);
-            Alert.alert('Error', 'No se pudo finalizar el viaje en el celular.');
-          } finally {
-            setFinalizando(false);
-          }
-        },
-      },
-    ]);
+  // conFoto = false: cierra sin foto de descarga (Configuración de activos: NO u OPCIONAL)
+  const cerrarViaje = async (conFoto) => {
+    let fotoFin = null;
+    try {
+      if (conFoto) {
+        const { status } = await ImagePicker.requestCameraPermissionsAsync();
+        if (status !== 'granted') { Alert.alert('Cámara', 'Se necesita permiso de cámara para la foto de descarga.'); return; }
+        const r = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.5 });
+        if (r.canceled || !r.assets?.length) return;
+        setFinalizando(true);
+        fotoFin = await guardarFoto(r.assets[0].uri, viaje.uuid, 'fin', r.assets[0].width);
+      } else {
+        setFinalizando(true);
+      }
+      const pos = await ubicacionConocida();
+      await finalizarViajeLocal(viaje.uuid, { fotoFinPath: fotoFin, lat: pos?.lat, lon: pos?.lon });
+      // Primero se guarda el cierre y después se apaga el GPS: si guardar falla, el viaje
+      // sigue EN_CURSO con el GPS encendido (antes quedaba en curso y sin GPS).
+      // Los puntos que falten se suben antes del cierre.
+      await detenerGPS();
+      enviarPendientes().catch(() => {});
+      Alert.alert('✅ Viaje finalizado', 'Quedó guardado en el celular y se enviará automáticamente cuando haya señal.', [
+        { text: 'OK', onPress: () => navigation.navigate('Home') },
+      ]);
+    } catch (e) {
+      if (fotoFin) borrarArchivo(fotoFin);
+      Alert.alert('Error', 'No se pudo finalizar el viaje en el celular.');
+    } finally {
+      setFinalizando(false);
+    }
+  };
+
+  const finalizar = () => {
+    // Se lee al tocar (y no solo al abrir): una sincronización durante el viaje pudo cambiarla
+    configPaquetePorPlaca(viaje.placa, 'viajes').catch(() => null).then((cfg) => {
+      const nivel = nivelFoto(cfg, 'foto_descarga');
+      if (nivel === 'NO') {
+        Alert.alert('Finalizar viaje', '¿Terminaste la descarga? El viaje se cierra ahora.', [
+          { text: 'Cancelar', style: 'cancel' },
+          { text: 'Finalizar', onPress: () => cerrarViaje(false) },
+        ]);
+      } else if (nivel === 'OPCIONAL') {
+        Alert.alert('Finalizar viaje', 'La foto de la descarga es opcional para este equipo.', [
+          { text: 'Cancelar', style: 'cancel' },
+          { text: 'Seguir sin foto', onPress: () => cerrarViaje(false) },
+          { text: 'Tomar foto', onPress: () => cerrarViaje(true) },
+        ]);
+      } else {
+        Alert.alert('Finalizar viaje', 'Toma la foto de la descarga para cerrar el viaje.', [
+          { text: 'Cancelar', style: 'cancel' },
+          { text: 'Tomar foto', onPress: () => cerrarViaje(true) },
+        ]);
+      }
+    });
   };
 
   const reintentar = async () => {
@@ -401,7 +429,8 @@ export default function ViajeEnCursoScreen({ route, navigation }) {
         <FilaEtapa titulo="Foto de carga" estado={viaje.sync_foto_inicio} />
         <FilaEtapa titulo="Recorrido GPS" estado={recorrido?.pendientes ? 'pending' : 'synced'}
           nota={recorrido?.pendientes ? `${recorrido.pendientes} por enviar` : (recorrido?.capturados ? 'Al día' : 'Sin puntos aún')} />
-        <FilaEtapa titulo="Foto de descarga" estado={enCurso ? 'pending' : viaje.sync_foto_fin} nota={enCurso ? 'Al finalizar' : null} />
+        <FilaEtapa titulo="Foto de descarga" estado={enCurso ? (nivelDescarga === 'NO' ? 'sin_foto' : 'pending') : viaje.sync_foto_fin}
+          nota={enCurso ? (nivelDescarga === 'NO' ? 'No se pide' : 'Al finalizar') : null} />
         <FilaEtapa titulo="Cierre del viaje" estado={enCurso ? 'pending' : viaje.sync_fin} nota={enCurso ? 'Al finalizar' : null} />
       </View>
 

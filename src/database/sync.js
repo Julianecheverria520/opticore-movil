@@ -3,6 +3,7 @@ import { getDb } from './db';
 import { fetchConTimeout, esErrorDeRed } from '../red';
 import { guardarFallasDescargadas } from '../fallas';
 import { guardarPeajesRutas } from '../rutaPlaneada';
+import { CLAVE_CONFIG_CONECTADOS } from '../configEquipo';
 
 // 'ok' | 'vacio' | 'sesion' | 'sin_red' | 'error'
 export let ultimoMotivoSync = null;
@@ -41,6 +42,10 @@ export async function leerConfigCombustible() {
  * v11 · tanqueos: "combustible" (rangos de precio/galón, tolerancia, margen del tanque,
  * foto del tiquete) va a AsyncStorage y "ultimo_tanqueo" de cada equipo a equipos. Un
  * servidor que no los manda deja la validación como antes (sin rango ni "¿tanqueo nuevo?").
+ *
+ * v12 · Configuración de activos: "config" de cada equipo (su efectiva) va a equipos.config_json y
+ * "config_conectados" a AsyncStorage (src/configEquipo.js). Un servidor viejo no los manda: el
+ * equipo queda con config_json NULL y la app se comporta como antes.
  *
  * E6 · Si ya hay una bajada en curso, devuelve esa misma promesa en lugar de lanzar
  * otra transacción DELETE/INSERT en paralelo.
@@ -123,8 +128,8 @@ async function bajar(token, API_URL) {
           `INSERT OR REPLACE INTO equipos (id, placa, tipo, estado, ultimo_odometro, ultimo_horometro,
              tiene_horometro, tiene_odometro, tipo_activo_id, capacidad_tanque_gal, meta_rendimiento,
              requiere_cantidad, capacidad_m3, capacidad_ton, ultimo_preop_fecha, categoria_peaje,
-             ultimo_tanqueo_fecha, ultimo_tanqueo_galones)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+             ultimo_tanqueo_fecha, ultimo_tanqueo_galones, config_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         );
         try {
           for (const eq of eqArray) {
@@ -145,7 +150,8 @@ async function bajar(token, API_URL) {
               eq.requiere_cantidad == null ? null : (eq.requiere_cantidad ? 1 : 0),
               eq.capacidad_m3 ?? null, eq.capacidad_ton ?? null, eq.ultimo_preop_fecha ?? null,
               eq.categoria_peaje ?? null,
-              typeof ut?.fecha === 'string' ? ut.fecha : null, ut?.galones ?? null
+              typeof ut?.fecha === 'string' ? ut.fecha : null, ut?.galones ?? null,
+              eq.config && typeof eq.config === 'object' ? JSON.stringify(eq.config) : null
             );
           }
         } finally { await st.finalizeAsync(); }
@@ -193,6 +199,10 @@ async function bajar(token, API_URL) {
     // v11 · validación de tanqueos (un servidor viejo no la manda: queda la guardada, o ninguna)
     if (data?.combustible && typeof data.combustible === 'object') {
       await AsyncStorage.setItem(CLAVE_COMBUSTIBLE, JSON.stringify(data.combustible));
+    }
+    // v12 · paquetes de Configuración de activos que ya manda la operación (src/configEquipo.js)
+    if (Array.isArray(data?.config_conectados)) {
+      await AsyncStorage.setItem(CLAVE_CONFIG_CONECTADOS, JSON.stringify(data.config_conectados));
     }
 
     const a = new Date();

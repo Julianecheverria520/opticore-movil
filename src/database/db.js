@@ -198,6 +198,12 @@ const MIGRACIONES = [
       if (!ce.includes(def.split(' ')[0])) await db.execAsync(`ALTER TABLE equipos ADD COLUMN ${def}`);
     }
   },
+  // v12 · Configuración de activos (src/configEquipo.js): la efectiva del equipo tal como llega en
+  //        /movil/maestros ({paquete: {campo: valor, aplica}}) en JSON. NULL = servidor viejo o sin datos.
+  async (db) => {
+    const ce = (await db.getAllAsync('PRAGMA table_info(equipos)')).map((c) => c.name);
+    if (!ce.includes('config_json')) await db.execAsync('ALTER TABLE equipos ADD COLUMN config_json TEXT');
+  },
 ];
 
 async function migrar(db) {

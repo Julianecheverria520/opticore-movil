@@ -15,6 +15,7 @@ import {
   guardarFoto, borrarArchivo, crearViajeLocal, viajeEnCurso, uuidViaje, RADIO_CERCANOS_KM,
   viajesAbiertosAjenos, describirAjenos,
 } from '../viajes';
+import { configPaquete, haceViajes, nivelFoto, pideCantidad, TEXTO_SIN_VIAJES, AYUDA_SIN_VIAJES } from '../configEquipo';
 
 /** Lista desplegable simple (modal) para material, origen y destino. */
 function Selector({ etiqueta, valor, placeholder, opciones, onSelect, deshabilitado }) {
@@ -78,6 +79,7 @@ export default function ViajeScreen({ route, navigation }) {
 
   const [cargando, setCargando] = useState(true);
   const [equipo, setEquipo] = useState(null);
+  const [cfgViajes, setCfgViajes] = useState(null); // Configuración de activos (null = como siempre)
   const [materiales, setMateriales] = useState([]);
   const [rutas, setRutas] = useState([]);
   const [posicion, setPosicion] = useState(null);
@@ -106,7 +108,18 @@ export default function ViajeScreen({ route, navigation }) {
         return;
       }
 
-      // 2. Preoperacional del día (decisión 1)
+      // 2. Configuración de activos (última bajada, sin señal): un equipo que no hace viajes no inicia
+      const db = await getDb();
+      const eq = await db.getFirstAsync('SELECT * FROM equipos WHERE placa = ?', placa);
+      const cfg = await configPaquete(eq, 'viajes');
+      if (!activo) return;
+      if (!haceViajes(cfg)) {
+        Alert.alert(TEXTO_SIN_VIAJES, `${placa}: ${AYUDA_SIN_VIAJES}`,
+          [{ text: 'Volver', onPress: () => navigation.goBack() }], { cancelable: false });
+        return;
+      }
+
+      // 3. Preoperacional del día (decisión 1)
       const token = await leerToken();
       const preop = await preoperacionalRequerido(placa, { token, apiUrl: API_URL });
       if (!activo) return;
@@ -125,20 +138,19 @@ export default function ViajeScreen({ route, navigation }) {
         return;
       }
 
-      // 3. Datos locales (sin señal)
-      const db = await getDb();
-      const [eq, mats, rts] = await Promise.all([
-        db.getFirstAsync('SELECT * FROM equipos WHERE placa = ?', placa),
+      // 4. Datos locales (sin señal)
+      const [mats, rts] = await Promise.all([
         db.getAllAsync('SELECT * FROM materiales ORDER BY nombre'),
         db.getAllAsync('SELECT * FROM rutas ORDER BY origen, destino'),
       ]);
       if (!activo) return;
       setEquipo(eq);
+      setCfgViajes(cfg);
       setMateriales(mats);
       setRutas(rts);
       setCargando(false);
 
-      // 4. Ubicación conocida para ordenar los orígenes cercanos (no bloquea el formulario)
+      // 5. Ubicación conocida para ordenar los orígenes cercanos (no bloquea el formulario)
       const pos = await ubicacionConocida();
       if (activo) setPosicion(pos);
     })();
@@ -168,7 +180,8 @@ export default function ViajeScreen({ route, navigation }) {
 
   const ruta = rutas.find((r) => r.origen === origen && r.destino === destino) || null;
 
-  const requiereCantidad = !!equipo?.requiere_cantidad;
+  const requiereCantidad = pideCantidad(cfgViajes, equipo);
+  const nivelFotoCarga = nivelFoto(cfgViajes, 'foto_carga'); // NO | OPCIONAL | OBLIGATORIA
   const { capacidad, unidad } = capacidadEquipo(equipo);
   const cantidadNum = parseNum(cantidad);
   const chequeo = validarCantidad(cantidadNum, equipo);
@@ -206,7 +219,17 @@ export default function ViajeScreen({ route, navigation }) {
       const ok = await confirmar('Revisa la cantidad', `Registraste ${cantidadNum} ${unidad} y la capacidad nominal es ${capacidad} ${unidad}.\n\n¿Es correcto?`);
       if (!ok) return;
     }
-    if (!fotoRef.current) return Alert.alert('Falta la foto', 'Toma la foto de la carga antes de iniciar.');
+    // Foto de carga según la Configuración de activos: NO = ni se muestra; OPCIONAL = se puede seguir sin ella
+    if (nivelFotoCarga === 'OBLIGATORIA' && !fotoRef.current) return Alert.alert('Falta la foto', 'Toma la foto de la carga antes de iniciar.');
+    if (nivelFotoCarga === 'OPCIONAL' && !fotoRef.current) {
+      const sinFoto = await new Promise((resolve) => {
+        Alert.alert('Sin foto de la carga', 'La foto de la carga es opcional para este equipo. ¿Quieres tomarla antes de iniciar?', [
+          { text: 'Tomar foto', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Seguir sin foto', onPress: () => resolve(true) },
+        ], { cancelable: false });
+      });
+      if (!sinFoto) { tomarFoto(); return; }
+    }
     if (ajenosRef.current.length) {
       const seguir = await new Promise((resolve) => {
         Alert.alert('Tienes un viaje abierto en el sistema', describirAjenos(ajenosRef.current), [
@@ -305,14 +328,18 @@ export default function ViajeScreen({ route, navigation }) {
           </View>
         ) : null}
 
-        <View style={styles.formGroup}>
-          <Text style={styles.formLabel}>Foto de la carga <Text style={{ color: '#ef4444' }}>*</Text></Text>
-          {fotoInicio ? <Image source={{ uri: fotoInicio }} style={styles.fotoPreview} /> : null}
-          <TouchableOpacity style={[styles.btnFoto, fotoInicio && { backgroundColor: '#10b981' }]} onPress={tomarFoto}>
-            <FontAwesome5 name={fotoInicio ? 'check-circle' : 'camera'} size={18} color="#fff" style={{ marginRight: 10 }} />
-            <Text style={styles.btnFotoTexto}>{fotoInicio ? 'Foto lista (tocar para repetir)' : 'Tomar foto de carga'}</Text>
-          </TouchableOpacity>
-        </View>
+        {nivelFotoCarga !== 'NO' ? (
+          <View style={styles.formGroup}>
+            <Text style={styles.formLabel}>
+              Foto de la carga {nivelFotoCarga === 'OBLIGATORIA' ? <Text style={{ color: '#ef4444' }}>*</Text> : <Text style={styles.opcional}>(opcional)</Text>}
+            </Text>
+            {fotoInicio ? <Image source={{ uri: fotoInicio }} style={styles.fotoPreview} /> : null}
+            <TouchableOpacity style={[styles.btnFoto, fotoInicio && { backgroundColor: '#10b981' }]} onPress={tomarFoto}>
+              <FontAwesome5 name={fotoInicio ? 'check-circle' : 'camera'} size={18} color="#fff" style={{ marginRight: 10 }} />
+              <Text style={styles.btnFotoTexto}>{fotoInicio ? 'Foto lista (tocar para repetir)' : 'Tomar foto de carga'}</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
 
         <TouchableOpacity style={[styles.submitBtn, guardando && styles.submitBtnDisabled]} onPress={iniciar} disabled={guardando}>
           {guardando ? <ActivityIndicator color="#fff" /> : (
@@ -337,6 +364,7 @@ const styles = StyleSheet.create({
   formContainer: { padding: 20, paddingBottom: 50, backgroundColor: '#f8fafc', flexGrow: 1 },
   formGroup: { marginBottom: 18 },
   formLabel: { fontSize: 13, color: '#475569', fontWeight: '800', marginBottom: 8, textTransform: 'uppercase' },
+  opcional: { color: '#94a3b8', fontWeight: '700', textTransform: 'none' },
   formInput: { width: '100%', padding: 15, borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, fontSize: 18, backgroundColor: '#ffffff', color: '#0f172a' },
   placaInput: { fontSize: 28, fontWeight: '900', textAlign: 'center', letterSpacing: 2, backgroundColor: '#f1f5f9' },
   inputError: { borderColor: '#ef4444', backgroundColor: '#fef2f2' },
