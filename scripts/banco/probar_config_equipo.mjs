@@ -19,9 +19,11 @@ let ok = 0;
 const chk = (c, m) => { assert.ok(c, m); ok++; console.log('  ✔', m); };
 const titulo = (t) => console.log(`\n${t}`);
 
-// db.js del último commit (v11, el de 1.4.0): base de partida y prueba de rollback
+// db.js v11 (el de 1.4.0 antes de Viajes): base de partida y prueba de rollback. Fijado en c5838d8, el
+// último commit con v11: con HEAD la prueba se rompía apenas v12 quedaba en un commit.
+const DB_V11 = 'c5838d8';
 const dbV11 = join(tmp, 'db_v11.mjs');
-writeFileSync(dbV11, execFileSync('git', ['show', 'HEAD:src/database/db.js'], { cwd: fileURLToPath(RAIZ) }));
+writeFileSync(dbV11, execFileSync('git', ['show', `${DB_V11}:src/database/db.js`], { cwd: fileURLToPath(RAIZ) }));
 
 try {
   // ── 1. Migración ─────────────────────────────────────────────────────────────
